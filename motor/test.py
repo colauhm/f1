@@ -2,7 +2,7 @@ import RPi.GPIO as GPIO
 
 GPIO.setmode(GPIO.BCM)
 
-pwm_pin = 18
+pwm_pin = 13
 in1_pin = 23
 in2_pin = 24
 
