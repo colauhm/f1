@@ -13,5 +13,6 @@ GPIO.setup(in2_pin, GPIO.OUT)
 pwm = GPIO.PWM(pwm_pin, 1000)  # 1 kHz frequency
 pwm.start(0)
 
-GPIO.output(in1_pin, True)
-GPIO.output(in2_pin, False)
+while True :
+    GPIO.output(in1_pin, True)
+    GPIO.output(in2_pin, False)
