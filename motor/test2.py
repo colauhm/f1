@@ -37,8 +37,8 @@ pwm.start(0)
 
 # ---- 속도 설정 ----
 speed = 1000  # 기본 속도
-ACC = 80     # 가속량
-DEC = 40     # 감속량
+ACC = 200     # 가속량
+DEC = 100     # 감속량
 
 # ---- 키 리스너 스레드 시작 ----
 listener = threading.Thread(target=key_listener, daemon=True)
