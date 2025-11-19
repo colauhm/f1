@@ -36,7 +36,7 @@ pwm = GPIO.PWM(pwm_pin, 1000)
 pwm.start(0)
 
 # ---- 속도 설정 ----
-speed = 100  # 기본 속도
+speed = 1000  # 기본 속도
 ACC = 80     # 가속량
 DEC = 40     # 감속량
 
