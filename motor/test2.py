@@ -73,7 +73,7 @@ try:
                     speed = 1000
 
         # 듀티사이클 계산
-        duty = (speed / 4095) * 200
+        duty = (speed / 4095) * 100
         pwm.ChangeDutyCycle(duty)
 
         print(f"Speed: {speed}  Duty: {duty:.1f}%", end="\r")
