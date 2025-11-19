@@ -67,10 +67,10 @@ try:
                 speed = 4095
         else:
             # 자동 감속
-            if speed > 100:
+            if speed > 1000:
                 speed -= DEC
-                if speed < 100:
-                    speed = 100
+                if speed < 1000:
+                    speed = 1000
 
         # 듀티사이클 계산
         duty = (speed / 4095) * 100
