@@ -13,7 +13,7 @@ def key_listener():
     global pressed_key
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
-    tty.setcbreak(fd)  # 엔터 없이 입력 감지
+    tty.setcbreak(fd)
     try:
         while True:
             pressed_key = sys.stdin.read(1)
@@ -24,7 +24,6 @@ def key_listener():
 GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
 
-# 핀 번호 설정 (사용자 환경에 맞춤)
 pwm_pin = 13
 in1_pin = 23
 in2_pin = 24
@@ -33,63 +32,66 @@ GPIO.setup(pwm_pin, GPIO.OUT)
 GPIO.setup(in1_pin, GPIO.OUT)
 GPIO.setup(in2_pin, GPIO.OUT)
 
-# PWM 설정 (주파수 1kHz)
-pwm = GPIO.PWM(pwm_pin, 1000)  
+pwm = GPIO.PWM(pwm_pin, 1000)
 pwm.start(0)
 
-# ---- 변수 설정 ----
-# speed: 현재 모터에 인가하려는 '전력 레벨' (0 ~ 4095)
-speed = 0  
-ACC = 200     # 가속 시 증가량
+# ---- 속도 관련 설정 (이 부분을 조정하세요) ----
+MAX_SPEED = 4095   # 최대 속도
+MIN_SPEED = 800   # 최소 유지 속도 (모터가 간신히 도는 정도의 값으로 설정 추천)
+ACC = 200          # 가속량
 
-# ---- 키 리스너 스레드 시작 ----
+# 초기 속도를 0으로 시작할지, 바로 최소 속도로 켤지 결정
+# 여기서는 안전을 위해 0으로 시작하되, 키를 한번이라도 누르거나 떼면 MIN_SPEED가 적용됨
+current_speed = 0  
+
 listener = threading.Thread(target=key_listener, daemon=True)
 listener.start()
 
 try:
-    # 정방향 설정 (모터 드라이버에 따라 True/False 방향 확인 필요)
     GPIO.output(in1_pin, True)
     GPIO.output(in2_pin, False)
 
     print("===========================================")
-    print(" [제어 모드: 관성 주행]")
-    print(" w : 가속 (누르고 있는 동안 전력 공급)")
-    print(" 키 뗌 : 전력 차단 (관성으로 굴러감)")
-    print(" q : 프로그램 종료")
+    print(f" [제어 모드: 최소 속도 유지 ({MIN_SPEED})]")
+    print(" w : 가속 (누르는 동안 증가)")
+    print(" 키 뗌 : 관성 감속 후 최소 속도 유지")
+    print(" q : 종료")
     print("===========================================")
 
     while True:
-        time.sleep(0.05)  # 50ms 루프 주기
+        time.sleep(0.05)
 
         key = pressed_key
-        pressed_key = None  # 키 입력 처리 후 초기화
+        pressed_key = None
 
         if key == 'q':
-            print("\n프로그램을 종료한다.")
             break
 
         # ------------------------------------------------
-        # [핵심 수정 부분]
+        # [수정된 로직]
         # ------------------------------------------------
         if key == 'w':
-            # 가속: 키를 누르면 전력 레벨을 높임
-            speed += ACC
-            if speed > 4095:
-                speed = 4095
+            # 가속: 현재 속도에서 더함
+            # (만약 정지 상태였다면 MIN_SPEED부터 시작하도록 보정해줄 수도 있음)
+            if current_speed < MIN_SPEED:
+                current_speed = MIN_SPEED
+            
+            current_speed += ACC
+            if current_speed > MAX_SPEED:
+                current_speed = MAX_SPEED
         else:
-            # 관성 주행: 키를 떼면 즉시 전력을 0으로 만듦
-            # 전압을 서서히 낮추는 게 아니라 아예 끊어버림으로써
-            # 모터가 물리적 관성에 의해서만 돌게 함
-            speed = 0
+            # 키를 떼면: 강제로 속도를 줄이는 게 아니라
+            # 목표 값을 '최소 속도'로 둠.
+            # PWM 전압이 MAX에서 MIN으로 뚝 떨어지므로,
+            # 모터는 물리적 관성으로 돌다가 마찰에 의해 MIN_SPEED 수준까지 자연스럽게 느려짐.
+            current_speed = MIN_SPEED
         # ------------------------------------------------
 
-        # 듀티사이클 계산 및 적용
-        duty = (speed / 4095) * 100
+        duty = (current_speed / MAX_SPEED) * 100
         pwm.ChangeDutyCycle(duty)
 
-        # 상태 출력 (speed가 0이면 Duty 0% -> 전력 차단 상태)
-        status = "가속 중" if speed > 0 else "관성 주행(Free)"
-        print(f"State: {status} | Power Level: {speed} | Duty: {duty:.1f}%   ", end="\r")
+        status = "가속 중" if current_speed > MIN_SPEED else "최소 속도 유지"
+        print(f"State: {status} | Speed: {current_speed} | Duty: {duty:.1f}%   ", end="\r")
 
 except KeyboardInterrupt:
     pass
@@ -97,4 +99,4 @@ except KeyboardInterrupt:
 finally:
     pwm.stop()
     GPIO.cleanup()
-    print("\nGPIO 정리 완료.")
+    print("\n종료")
