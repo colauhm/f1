@@ -4,7 +4,7 @@ import sys
 import time
 from fastapi import APIRouter, WebSocket
 
-# ---- OS 판별 및 라이브러리 불러오기 ----
+# ---- OS 판별 및 라이브러리 설정 ----
 try:
     # 리눅스/라즈베리파이 환경
     import termios
@@ -13,7 +13,7 @@ try:
     PLATFORM = "LINUX"
 except ImportError:
     # 윈도우 환경 (테스트용 Mock 설정)
-    import msvcrt  # 윈도우용 키 입력 라이브러리
+    import msvcrt
     PLATFORM = "WINDOWS"
     
     # 가짜 GPIO 클래스 (에러 방지용)
@@ -25,6 +25,7 @@ except ImportError:
         def setup(self, pin, mode): pass
         def output(self, pin, state): pass
         def cleanup(self): print("Mock GPIO Cleaned up")
+        # PWM 클래스 모킹
         class PWM:
             def __init__(self, pin, freq): pass
             def start(self, duty): pass
@@ -32,17 +33,16 @@ except ImportError:
             def stop(self): pass
     
     GPIO = MockGPIO()
-    print("⚠️ 윈도우 환경 감지됨: GPIO와 termios가 가상으로 작동합니다.")
 
 # ---- 라우터 설정 ----
 router = APIRouter(prefix="/api")
 
 # ---- 글로벌 변수 ----
 current_duty = 0.0
-pressed_key = None
+last_key_time = 0      # [중요] 마지막 키 입력 시간 저장
 stop_threads = False
 
-# ---- GPIO 설정 ----
+# ---- GPIO 초기화 (여기가 중요함) ----
 GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
 
@@ -54,6 +54,7 @@ GPIO.setup(pwm_pin, GPIO.OUT)
 GPIO.setup(in1_pin, GPIO.OUT)
 GPIO.setup(in2_pin, GPIO.OUT)
 
+# [오류 해결 핵심] pwm 객체를 전역 변수로 생성
 pwm = GPIO.PWM(pwm_pin, 1000)
 pwm.start(0)
 
@@ -72,51 +73,59 @@ def get_key_input():
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
     else:
-        # 윈도우용 (msvcrt 사용)
+        # 윈도우용
         if msvcrt.kbhit():
-            # 윈도우는 바이트로 들어오므로 디코딩
             return msvcrt.getch().decode('utf-8').lower()
     return None
 
-# ---- 키 리스너 스레드 ----
+# ---- 키 리스너 스레드 (타임스탬프 방식) ----
 def key_listener():
-    global pressed_key, stop_threads
+    global last_key_time, stop_threads
     try:
         while not stop_threads:
             k = get_key_input()
-            if k:
-                pressed_key = k
-            time.sleep(0.01) # CPU 점유율 낮춤
+            
+            if k == 'w':
+                # 키가 감지되면 현재 시간을 기록
+                last_key_time = time.time()
+            elif k == 'q':
+                stop_threads = True
+                
+            time.sleep(0.01) 
     except Exception as e:
         print(f"Key listener error: {e}")
 
-# ---- 모터 제어 스레드 ----
+# ---- 모터 제어 스레드 (부드러운 가속) ----
 def motor_control_loop():
-    global current_duty, pressed_key, stop_threads
+    global current_duty, stop_threads, pwm # pwm을 전역에서 가져옴
     
     speed = 0
     MAX_SPEED = 4095
     MIN_SPEED = 1500
     ACC = 200
     
+    # 입력 유효 시간 (이 시간 안에 입력 없으면 뗀 것으로 간주)
+    KEY_TIMEOUT = 0.15 
+    
     while not stop_threads:
         time.sleep(0.05)
         
-        key = pressed_key
-        pressed_key = None 
-
-        if key == 'q':
-            stop_threads = True
-            break
-            
-        if key == 'w':
+        # 현재 시간과 마지막 입력 시간의 차이 계산
+        time_diff = time.time() - last_key_time
+        
+        # 타임아웃 이내라면 누르고 있는 중
+        if time_diff < KEY_TIMEOUT:
             if speed < MIN_SPEED: speed = MIN_SPEED
             speed += ACC
             if speed > MAX_SPEED: speed = MAX_SPEED
+            
+        # 타임아웃 지났으면 키 뗀 것 (관성 주행)
         else:
             speed = MIN_SPEED
 
         duty = (speed / MAX_SPEED) * 100
+        
+        # 여기서 전역 변수 pwm을 사용함
         pwm.ChangeDutyCycle(duty)
         current_duty = duty
 
