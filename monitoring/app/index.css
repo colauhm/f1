@@ -1,0 +1,51 @@
+body { 
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+    text-align: center; 
+    background: #1a1a1a; 
+    color: #f0f0f0; 
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    margin: 0;
+}
+
+h1 { 
+    margin-bottom: 40px; 
+    font-weight: 300; 
+}
+
+/* 게이지 컨테이너 */
+.gauge-container {
+    width: 80%;
+    max-width: 600px;
+    background: #333;
+    border-radius: 25px;
+    padding: 5px;
+    box-shadow: 0 0 15px rgba(0,0,0,0.5);
+    position: relative;
+    overflow: hidden;
+}
+
+/* 실제 채워지는 바 */
+.gauge-fill {
+    height: 40px;
+    background: linear-gradient(90deg, #00f260, #0575e6);
+    width: 0%;
+    border-radius: 20px;
+    transition: width 0.1s ease-out;
+}
+
+/* 텍스트 표시 */
+.status-text {
+    margin-top: 20px;
+    font-size: 2rem;
+    font-weight: bold;
+}
+
+.sub-text {
+    font-size: 1rem;
+    color: #888;
+    margin-top: 10px;
+}

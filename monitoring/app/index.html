@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Motor Control</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <h1>RC Car Dashboard</h1>
+    
+    <div class="gauge-container">
+        <div id="duty-bar" class="gauge-fill"></div>
+    </div>
+
+    <div class="status-text">
+        Power: <span id="duty-val">0</span>%
+    </div>
+    
+    <div class="sub-text">
+        Status: <span id="status-msg">Waiting...</span>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>

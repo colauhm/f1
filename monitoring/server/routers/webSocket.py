@@ -5,9 +5,9 @@ import tty
 import termios
 import time
 import RPi.GPIO as GPIO
-from fastapi import FastAPI, WebSocket, APIRouter
+from fastapi import APIRouter, WebSocket
 
-app = FastAPI()
+# 라우터만 정의 (app = FastAPI() 삭제)
 router = APIRouter(prefix="/api")
 
 # ---- 글로벌 변수 ----
@@ -56,7 +56,7 @@ def motor_control_loop():
     
     speed = 0
     MAX_SPEED = 4095
-    MIN_SPEED = 1500  # 최소 유지 속도 (관성 주행 시)
+    MIN_SPEED = 1500  # 최소 유지 속도
     ACC = 200         # 가속량
     
     while not stop_threads:
@@ -75,49 +75,38 @@ def motor_control_loop():
             speed += ACC
             if speed > MAX_SPEED: speed = MAX_SPEED
         else:
-            # 키 뗌 -> 최소 속도 유지 (관성 주행 모드)
+            # 키 뗌 -> 최소 속도 유지
             speed = MIN_SPEED
 
-        # Duty 계산
         duty = (speed / MAX_SPEED) * 100
         pwm.ChangeDutyCycle(duty)
-        
-        # 웹소켓 공유용 변수 업데이트
         current_duty = duty
 
     # 종료 처리
     pwm.stop()
     GPIO.cleanup()
 
+# ---- [추가] 스레드 시작 함수 ----
+# main.py에서 이 함수를 호출해야 하드웨어가 작동함
+def start_hardware():
+    t_motor = threading.Thread(target=motor_control_loop, daemon=True)
+    t_motor.start()
+
+    t_key = threading.Thread(target=key_listener, daemon=True)
+    t_key.start()
+
 # ---- 웹소켓 엔드포인트 ----
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    
     try:
         while True:
             if stop_threads:
                 break
             
-            # 오직 Duty 값만 JSON으로 전송
-            payload = {
-                "duty": round(current_duty, 1)
-            }
-            
+            payload = { "duty": round(current_duty, 1) }
             await websocket.send_json(payload)
-
-            # 갱신 주기 (0.05초 = 초당 20회 전송)
             await asyncio.sleep(0.05)
 
     except Exception as e:
         print(f"WebSocket Disconnected: {e}")
-
-# ---- 메인 실행부 ----
-app.include_router(router)
-
-# 스레드 시작
-t_motor = threading.Thread(target=motor_control_loop, daemon=True)
-t_motor.start()
-
-t_key = threading.Thread(target=key_listener, daemon=True)
-t_key.start()
