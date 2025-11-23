@@ -21,7 +21,7 @@ SAFETY_LOCK_DURATION = 5.0
 
 # [수정] 관성 주행을 위해 속도를 0으로 설정
 # 0%를 주면 모터에 전기가 끊겨 바퀴가 관성으로 굴러갑니다.
-SAFETY_SPEED = 0                
+SAFETY_SPEED = 30                
 
 # --- GPIO 초기화 ---
 GPIO.setmode(GPIO.BCM)
