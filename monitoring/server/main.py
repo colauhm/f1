@@ -34,10 +34,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# server/main.py
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=['*'], 
-    allow_credentials=True,
+    allow_origins=["*"],      # 모든 IP 허용
+    allow_credentials=False,  # [★핵심 수정] True -> False로 변경
     allow_methods=["*"],
     allow_headers=["*"],
 )
