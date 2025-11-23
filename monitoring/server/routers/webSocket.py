@@ -2,9 +2,9 @@ import asyncio
 import threading
 import sys
 import time
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket
 
-# ---- OS 판별 및 라이브러리 설정 (이전과 동일) ----
+# ---- OS 판별 및 라이브러리 설정 ----
 try:
     import termios
     import tty
@@ -31,7 +31,7 @@ router = APIRouter(prefix="/api")
 
 # ---- 글로벌 변수 ----
 current_duty = 0.0
-last_key_time = 0  # 웹 버튼이 눌려도 이 시간이 갱신됨
+last_key_time = 0
 stop_threads = False
 
 # ---- GPIO 초기화 ----
@@ -48,15 +48,21 @@ GPIO.setup(in2_pin, GPIO.OUT)
 
 pwm = GPIO.PWM(pwm_pin, 1000)
 pwm.start(0)
+
 GPIO.output(in1_pin, True)
 GPIO.output(in2_pin, False)
 
-# ---- 키 입력 리스너 (기존 유지) ----
+# ---- 키 입력 ----
 def get_key_input():
     if PLATFORM == "LINUX":
-        import select
-        if select.select([sys.stdin], [], [], 0)[0]:
-            return sys.stdin.read(1)
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setcbreak(fd)
+            if sys.stdin in [sys.stdin]:
+                return sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
     else:
         if msvcrt.kbhit():
             return msvcrt.getch().decode('utf-8').lower()
@@ -64,10 +70,6 @@ def get_key_input():
 
 def key_listener():
     global last_key_time, stop_threads
-    if PLATFORM == "LINUX":
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-        tty.setcbreak(fd)
     try:
         while not stop_threads:
             k = get_key_input()
@@ -78,36 +80,40 @@ def key_listener():
             time.sleep(0.01) 
     except Exception as e:
         print(f"Key listener error: {e}")
-    finally:
-        if PLATFORM == "LINUX":
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
-# ---- 모터 제어 루프 (기존 로직 유지) ----
+# ---- [핵심 수정] 모터 제어 루프 ----
 def motor_control_loop():
     global current_duty, stop_threads, pwm
     
     speed = 0
     MAX_SPEED = 4095
-    MIN_SPEED = 1500
-    ACC = 200
-    STOP_DELAY = 0.8 # 웹 지연 고려해서 넉넉히 유지
+    MIN_SPEED = 800
+    
+    ACC = 100   # 가속할 때 더해지는 값
+    DEC = 50   # [추가] 감속할 때 빠지는 값 (부드러운 연결용)
+    
+    # [수정 1] 타임아웃을 0.5초로 넉넉하게 설정 (OS 딜레이 커버)
+    KEY_TIMEOUT = .8 
     
     while not stop_threads:
-        time.sleep(0.05)
+        time.sleep(0.05) # 50ms 주기
         
         time_diff = time.time() - last_key_time
         
-        # 키보드 OR 웹 버튼 신호가 최근에 있었다면 가속
-        if time_diff < STOP_DELAY:
-            if time_diff < 0.2: 
-                speed += ACC
-                if speed > MAX_SPEED: speed = MAX_SPEED
-            else:
-                if speed > MIN_SPEED: speed -= 20 
+        # 1. 키를 누르고 있다고 판단될 때
+        if time_diff < KEY_TIMEOUT:
+            if speed < MIN_SPEED: speed = MIN_SPEED
+            speed += ACC
+            if speed > MAX_SPEED: speed = MAX_SPEED
+            
+        # 2. 키를 뗐다고 판단될 때
         else:
+            # [수정 2] 확 떨어뜨리지 않고 서서히 줄임 (관성 효과 + 끊김 방지)
             if speed > MIN_SPEED:
-                speed -= 150
-                if speed < MIN_SPEED: speed = MIN_SPEED
+                speed -= DEC
+                # MIN_SPEED 밑으로는 안 떨어지게 방어
+                if speed < MIN_SPEED:
+                    speed = MIN_SPEED
             else:
                 speed = MIN_SPEED
 
@@ -124,41 +130,14 @@ def start_hardware():
     t_key = threading.Thread(target=key_listener, daemon=True)
     t_key.start()
 
-# ---- [핵심 변경] 웹소켓 비동기 처리 ----
-async def ws_sender(websocket: WebSocket):
-    """모터 상태를 주기적으로 웹으로 전송"""
+@router.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
     try:
         while True:
             if stop_threads: break
             payload = { "duty": round(current_duty, 1) }
             await websocket.send_json(payload)
-            await asyncio.sleep(0.05) # 20FPS 전송
-    except WebSocketDisconnect:
-        pass
-
-async def ws_receiver(websocket: WebSocket):
-    """웹에서 오는 버튼 신호를 받음"""
-    global last_key_time
-    try:
-        while True:
-            data = await websocket.receive_json()
-            # 웹에서 {"command": "go"}를 보내면 가속으로 인식
-            if data.get("command") == "go":
-                last_key_time = time.time()
-    except WebSocketDisconnect:
-        print("Client disconnected")
-
-@router.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    # 보내는 작업과 받는 작업을 동시에 실행 (병렬 처리)
-    sender_task = asyncio.create_task(ws_sender(websocket))
-    receiver_task = asyncio.create_task(ws_receiver(websocket))
-    
-    # 둘 중 하나라도 끝나면(연결 끊김 등) 종료
-    done, pending = await asyncio.wait(
-        [sender_task, receiver_task],
-        return_when=asyncio.FIRST_COMPLETED,
-    )
-    for task in pending:
-        task.cancel()
+            await asyncio.sleep(0.05)
+    except Exception as e:
+        print(f"WebSocket Disconnected: {e}")
