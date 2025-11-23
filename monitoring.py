@@ -20,11 +20,11 @@ RAPID_PRESS_WINDOW = 2.0
 SAFETY_LOCK_DURATION = 5.0       
 
 # 1. [안전 모드] 위험 감지 시 속도 (0 = 전력 차단/관성 주행)
-SAFETY_SPEED = 30
+SAFETY_SPEED = 20
 
 # 2. [기본 주행 속도]
 # 페달을 밟지 않아도(0%) 항상 유지되는 최소 속도
-IDLE_SPEED = 30
+IDLE_SPEED = 20
 
 # --- GPIO 초기화 ---
 GPIO.setmode(GPIO.BCM)
