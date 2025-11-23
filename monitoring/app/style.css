@@ -1,5 +1,5 @@
 body { 
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+    font-family: sans-serif; 
     text-align: center; 
     background: #1a1a1a; 
     color: #f0f0f0; 
@@ -9,43 +9,50 @@ body {
     justify-content: center;
     height: 100vh;
     margin: 0;
+    /* 모바일 터치 스크롤 방지 */
+    touch-action: manipulation; 
 }
 
-h1 { 
-    margin-bottom: 40px; 
-    font-weight: 300; 
-}
-
-/* 게이지 컨테이너 */
+/* (게이지 관련 스타일은 기존 유지) */
 .gauge-container {
-    width: 80%;
-    max-width: 600px;
-    background: #333;
-    border-radius: 25px;
-    padding: 5px;
+    width: 80%; max-width: 600px; background: #333;
+    border-radius: 25px; padding: 5px;
     box-shadow: 0 0 15px rgba(0,0,0,0.5);
-    position: relative;
     overflow: hidden;
 }
-
-/* 실제 채워지는 바 */
 .gauge-fill {
-    height: 40px;
+    height: 40px; width: 0%;
     background: linear-gradient(90deg, #00f260, #0575e6);
-    width: 0%;
-    border-radius: 20px;
-    transition: width 0.1s ease-out;
+    border-radius: 20px; transition: width 0.1s ease-out;
+}
+.status-text { margin-top: 20px; font-size: 2rem; font-weight: bold; }
+.sub-text { font-size: 1rem; color: #888; margin-top: 10px; }
+
+/* [추가됨] 버튼 스타일 */
+.control-panel {
+    margin-top: 50px;
+    width: 100%;
 }
 
-/* 텍스트 표시 */
-.status-text {
-    margin-top: 20px;
-    font-size: 2rem;
+#acc-btn {
+    width: 200px;
+    height: 200px;
+    border-radius: 50%;
+    border: none;
+    background: radial-gradient(circle, #ff4b1f, #ff9068);
+    color: white;
+    font-size: 2.5rem;
     font-weight: bold;
+    box-shadow: 0 10px 20px rgba(255, 75, 31, 0.4);
+    cursor: pointer;
+    /* 모바일 길게 누르기(복사 메뉴 등) 방지 */
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none; 
 }
 
-.sub-text {
-    font-size: 1rem;
-    color: #888;
-    margin-top: 10px;
+#acc-btn:active {
+    transform: scale(0.95);
+    background: radial-gradient(circle, #d63a15, #ff4b1f);
+    box-shadow: 0 5px 10px rgba(255, 75, 31, 0.4);
 }
