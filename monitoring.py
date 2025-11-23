@@ -9,7 +9,7 @@ IN1_PIN = 23
 IN2_PIN = 24
 
 # 시리얼 포트 설정 (아두이노 연결)
-SERIAL_PORT = '/dev/ttyACM0' # 포트 이름 확인 필요 (ls /dev/tty* 로 확인)
+SERIAL_PORT = '/dev/ttyUSB0' # 포트 이름 확인 필요 (ls /dev/tty* 로 확인)
 BAUD_RATE = 9600
 
 # GPIO 설정
