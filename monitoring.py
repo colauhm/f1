@@ -2,7 +2,7 @@ import serial
 import time
 
 # 위에서 확인한 포트 이름을 적어주세요 (보통 /dev/ttyACM0)
-PORT = '/dev/ttyACM0'
+PORT = '/dev/ttyUSB0'
 BAUD_RATE = 9600
 
 try:
