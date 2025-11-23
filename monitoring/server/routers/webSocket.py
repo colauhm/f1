@@ -49,8 +49,8 @@ RAPID_PRESS_COUNT = 3
 RAPID_PRESS_WINDOW = 2.0
 SAFETY_LOCK_DURATION = 5.0
 
-SAFETY_SPEED = 0       # 위험 시 정지
-IDLE_SPEED = 30        # 공회전 속도
+SAFETY_SPEED = 15       # 위험 시 정지
+IDLE_SPEED = 15        # 공회전 속도
 IDLE_TIMEOUT = 5.0     # 자동 정지 시간
 
 # ---- 전역 변수 ----
