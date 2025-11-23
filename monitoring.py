@@ -20,10 +20,10 @@ RAPID_PRESS_WINDOW = 2.0
 SAFETY_LOCK_DURATION = 5.0       
 
 # 1. [안전 모드] 위험 감지 시 속도 (0 = 전력 차단)
-SAFETY_SPEED = 10
+SAFETY_SPEED = 15       
 
 # 2. [기본 주행 속도] (페달 안 밟았을 때)
-IDLE_SPEED = 15
+IDLE_SPEED = 20
 
 # 3. [추가] 자동 정지 시간 설정
 # 페달을 밟지 않고 이 시간이 지나면 IDLE_SPEED를 끄고 0으로 만듦
