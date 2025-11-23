@@ -109,12 +109,7 @@ try:
                         # --- [핵심 수정] 정상 주행 시 최소 속도 로직 ---
                         if current_pedal_value == 0:
                             # 발을 완전히 떼면 멈춤
-                            target_speed = 0
-                        else:
-                            # 발을 조금이라도 밟으면 30%와 현재 값 중 큰 값을 선택
-                            # 예: 페달 10% -> 모터 30%
-                            # 예: 페달 50% -> 모터 50%
-                            target_speed = max(current_pedal_value, MIN_START_SPEED)
+                            target_speed = 30
 
                 # --- 모터 구동 ---
                 pwm.ChangeDutyCycle(target_speed)
