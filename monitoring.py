@@ -19,12 +19,12 @@ RAPID_PRESS_COUNT = 3
 RAPID_PRESS_WINDOW = 2.0         
 SAFETY_LOCK_DURATION = 5.0       
 
-# 1. [안전 모드] 급발진 감지 시 속도 (관성 주행 = 0)
+# 1. [안전 모드] 위험 감지 시 속도 (0 = 전력 차단/관성 주행)
 SAFETY_SPEED = 30
 
-# 2. [추가] 정상 주행 시 최소 구동 속도 (30%)
-# 페달을 살짝 밟아도 모터는 30% 힘으로 돌기 시작함 (마찰력 극복용)
-MIN_START_SPEED = 30
+# 2. [기본 주행 속도]
+# 페달을 밟지 않아도(0%) 항상 유지되는 최소 속도
+IDLE_SPEED = 30
 
 # --- GPIO 초기화 ---
 GPIO.setmode(GPIO.BCM)
@@ -46,11 +46,12 @@ last_time = time.time()
 prev_over_90 = False        
 
 print(f"시스템 시작: 포트 {SERIAL_PORT} 연결 대기중...")
+print(f"주의: 연결되면 페달을 밟지 않아도 모터가 {IDLE_SPEED}%로 회전합니다!")
 
 try:
     ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
     ser.flush()
-    print(f"연결 성공! (최소 속도 {MIN_START_SPEED}% 설정됨)")
+    print("연결 성공! 주행 시작.")
 
     while True:
         if ser.in_waiting > 0:
@@ -59,17 +60,18 @@ try:
                 if not line.isdigit():
                     continue
                 
-                # 1. 데이터 수집 및 전처리
+                # 1. 데이터 수집
                 current_pedal_value = int(line)
                 if current_pedal_value < 0: current_pedal_value = 0
                 if current_pedal_value > 100: current_pedal_value = 100
                 
                 current_time = time.time()
                 
-                # --- [로직 A] 안전 모드 (관성 주행) ---
+                # --- [로직 A] 안전 모드 (최우선 순위) ---
                 if current_time < override_end_time:
-                    target_speed = SAFETY_SPEED # 0% (전원 차단)
-                    print(f"!!! 위험 감지! 관성 주행 중 ({override_end_time - current_time:.1f}초 남음)")
+                    # 위험 감지 상태: 기본 속도(30)도 무시하고 0으로 만듦
+                    target_speed = SAFETY_SPEED 
+                    print(f"!!! 위험 감지! 동력 차단됨 ({override_end_time - current_time:.1f}초 남음)")
                 
                 else:
                     # --- [로직 B] 위험 감지 판단 ---
@@ -101,15 +103,17 @@ try:
 
                     prev_over_90 = is_over_90 
 
-                    # B-3. 속도 결정
+                    # B-3. 속도 결정 (정상 주행)
                     if trigger_safety:
                         override_end_time = current_time + SAFETY_LOCK_DURATION
-                        target_speed = SAFETY_SPEED # 0%
+                        target_speed = SAFETY_SPEED # 0% (동력 차단)
                     else:
-                        # --- [핵심 수정] 정상 주행 시 최소 속도 로직 ---
-                        if current_pedal_value == 0:
-                            # 발을 완전히 떼면 멈춤
-                            target_speed = 30
+                        # --- [핵심 수정] 항상 최소 30% 유지 ---
+                        # 페달값(0~100)과 IDLE_SPEED(30) 중 큰 값을 선택
+                        # 페달 0% -> 속도 30%
+                        # 페달 20% -> 속도 30%
+                        # 페달 50% -> 속도 50%
+                        target_speed = max(current_pedal_value, IDLE_SPEED)
 
                 # --- 모터 구동 ---
                 pwm.ChangeDutyCycle(target_speed)
