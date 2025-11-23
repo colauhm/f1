@@ -19,9 +19,12 @@ RAPID_PRESS_COUNT = 3
 RAPID_PRESS_WINDOW = 2.0         
 SAFETY_LOCK_DURATION = 5.0       
 
-# [수정] 관성 주행을 위해 속도를 0으로 설정
-# 0%를 주면 모터에 전기가 끊겨 바퀴가 관성으로 굴러갑니다.
-SAFETY_SPEED = 30                
+# 1. [안전 모드] 급발진 감지 시 속도 (관성 주행 = 0)
+SAFETY_SPEED = 30
+
+# 2. [추가] 정상 주행 시 최소 구동 속도 (30%)
+# 페달을 살짝 밟아도 모터는 30% 힘으로 돌기 시작함 (마찰력 극복용)
+MIN_START_SPEED = 30
 
 # --- GPIO 초기화 ---
 GPIO.setmode(GPIO.BCM)
@@ -47,7 +50,7 @@ print(f"시스템 시작: 포트 {SERIAL_PORT} 연결 대기중...")
 try:
     ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
     ser.flush()
-    print("연결 성공! 모니터링 시작.")
+    print(f"연결 성공! (최소 속도 {MIN_START_SPEED}% 설정됨)")
 
     while True:
         if ser.in_waiting > 0:
@@ -56,17 +59,17 @@ try:
                 if not line.isdigit():
                     continue
                 
-                # 1. 현재 데이터 수집
+                # 1. 데이터 수집 및 전처리
                 current_pedal_value = int(line)
                 if current_pedal_value < 0: current_pedal_value = 0
                 if current_pedal_value > 100: current_pedal_value = 100
                 
                 current_time = time.time()
                 
-                # --- [로직 A] 5초간 전력 차단 (관성 주행) ---
+                # --- [로직 A] 안전 모드 (관성 주행) ---
                 if current_time < override_end_time:
-                    target_speed = SAFETY_SPEED # 0% (전력 차단)
-                    print(f"!!! 위험 감지! 동력 차단됨 ({override_end_time - current_time:.1f}초 남음)")
+                    target_speed = SAFETY_SPEED # 0% (전원 차단)
+                    print(f"!!! 위험 감지! 관성 주행 중 ({override_end_time - current_time:.1f}초 남음)")
                 
                 else:
                     # --- [로직 B] 위험 감지 판단 ---
@@ -80,7 +83,7 @@ try:
                         angular_velocity = delta_angle / dt 
                         
                         if angular_velocity >= CRITICAL_ANGULAR_VELOCITY:
-                            print(f"[감지] 급발진 페달링! 각속도: {angular_velocity:.1f} deg/s")
+                            print(f"[감지] 급가속! ({angular_velocity:.1f} deg/s)")
                             trigger_safety = True
 
                     # B-2. 3회 연타 감지
@@ -92,18 +95,26 @@ try:
                         press_timestamps.popleft()
                     
                     if len(press_timestamps) >= RAPID_PRESS_COUNT:
-                        print(f"[감지] 2초 내 {len(press_timestamps)}회 과속 페달링!")
+                        print(f"[감지] 과속 연타 ({len(press_timestamps)}회)!")
                         trigger_safety = True
                         press_timestamps.clear() 
 
-                    # B-3. 결과 적용
                     prev_over_90 = is_over_90 
 
+                    # B-3. 속도 결정
                     if trigger_safety:
                         override_end_time = current_time + SAFETY_LOCK_DURATION
-                        target_speed = SAFETY_SPEED # 0으로 설정됨
+                        target_speed = SAFETY_SPEED # 0%
                     else:
-                        target_speed = current_pedal_value
+                        # --- [핵심 수정] 정상 주행 시 최소 속도 로직 ---
+                        if current_pedal_value == 0:
+                            # 발을 완전히 떼면 멈춤
+                            target_speed = 0
+                        else:
+                            # 발을 조금이라도 밟으면 30%와 현재 값 중 큰 값을 선택
+                            # 예: 페달 10% -> 모터 30%
+                            # 예: 페달 50% -> 모터 50%
+                            target_speed = max(current_pedal_value, MIN_START_SPEED)
 
                 # --- 모터 구동 ---
                 pwm.ChangeDutyCycle(target_speed)
@@ -114,12 +125,12 @@ try:
             except ValueError:
                 pass
             except Exception as e:
-                print(f"에러 발생: {e}")
+                print(f"에러: {e}")
                 
         time.sleep(0.01)
 
 except serial.SerialException:
-    print("아두이노 연결 끊김")
+    print("통신 오류")
 except KeyboardInterrupt:
     print("\n종료")
 finally:
