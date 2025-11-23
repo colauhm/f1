@@ -1,4 +1,4 @@
-const wsUrl = "ws://" + window.location.host + "/api/ws";
+const wsUrl = "ws://" + window.location.host + "/ws";
 const ws = new WebSocket(wsUrl);
 
 const bar = document.getElementById("duty-bar");
