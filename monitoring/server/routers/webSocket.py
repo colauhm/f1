@@ -26,7 +26,7 @@ except ImportError:
             def stop(self): pass
     GPIO = MockGPIO()
 
-router = APIRouter(prefix="/ws")
+router = APIRouter(prefix="/api")
 
 # ---- 2. 사용자 설정 변수 ----
 PWM_PIN = 13
@@ -192,7 +192,7 @@ def start_hardware():
     t.start()
 
 # ---- 6. 웹소켓 라우터 ----
-@router.websocket("")
+@router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     try:
