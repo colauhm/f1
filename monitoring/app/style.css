@@ -1,51 +1,119 @@
-body { 
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-    text-align: center; 
-    background: #1a1a1a; 
-    color: #f0f0f0; 
+body {
+    background-color: #111;
+    color: #eee;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     display: flex;
-    flex-direction: column;
-    align-items: center;
     justify-content: center;
+    align-items: center;
     height: 100vh;
     margin: 0;
-}
-
-h1 { 
-    margin-bottom: 40px; 
-    font-weight: 300; 
-}
-
-/* 게이지 컨테이너 */
-.gauge-container {
-    width: 80%;
-    max-width: 600px;
-    background: #333;
-    border-radius: 25px;
-    padding: 5px;
-    box-shadow: 0 0 15px rgba(0,0,0,0.5);
-    position: relative;
     overflow: hidden;
 }
 
-/* 실제 채워지는 바 */
-.gauge-fill {
-    height: 40px;
-    background: linear-gradient(90deg, #00f260, #0575e6);
-    width: 0%;
-    border-radius: 20px;
-    transition: width 0.1s ease-out;
+.dashboard-container {
+    text-align: center;
 }
 
-/* 텍스트 표시 */
-.status-text {
-    margin-top: 20px;
-    font-size: 2rem;
+h1 {
+    font-weight: 200;
+    letter-spacing: 2px;
+    margin-bottom: 20px;
+    color: #00d2ff;
+    text-shadow: 0 0 10px rgba(0, 210, 255, 0.5);
+}
+
+/* --- 게이지 스타일 --- */
+.gauge-wrapper {
+    position: relative;
+    width: 300px;
+    height: 160px; /* 반원이라 높이는 너비의 약 절반 */
+    margin: 0 auto;
+}
+
+.gauge-body {
+    width: 300px;
+    height: 150px;
+    position: relative;
+    overflow: hidden; /* 아래쪽 절반을 숨겨서 반원으로 만듦 */
+}
+
+/* 무지개색 아치 */
+.gauge-bg {
+    width: 300px;
+    height: 300px; /* 원형 */
+    border-radius: 50%;
+    background: conic-gradient(
+        from 180deg, 
+        #00ff00 0deg,   /* 초록 (저속) */
+        #ffff00 90deg,  /* 노랑 (중속) */
+        #ff0000 180deg  /* 빨강 (고속) */
+    );
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+/* 가운데 검은색 커버 (도넛 모양) */
+.gauge-cover {
+    width: 240px;
+    height: 240px;
+    background-color: #111;
+    border-radius: 50%;
+    position: absolute;
+    top: 30px;
+    left: 30px;
+    box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
+}
+
+/* 바늘 */
+.needle {
+    width: 4px;
+    height: 130px;
+    background: #fff;
+    position: absolute;
+    bottom: 0;      /* 바닥 기준 */
+    left: 148px;    /* 중앙 정렬 (300/2 - 바늘두께/2) */
+    transform-origin: bottom center; /* 회전 중심을 바늘 꼬리로 설정 */
+    transform: rotate(-90deg); /* 초기 상태: 왼쪽 끝(-90도) */
+    transition: transform 0.1s cubic-bezier(0.1, 0.5, 0.3, 1.5); /* 탄력 있는 움직임 */
+    border-radius: 50% 50% 0 0;
+    box-shadow: 0 0 5px white;
+    z-index: 10;
+}
+
+/* 바늘 꼬리 덮개 (중앙 원) */
+.needle::after {
+    content: '';
+    position: absolute;
+    bottom: -10px;
+    left: -8px;
+    width: 20px;
+    height: 20px;
+    background: #fff;
+    border-radius: 50%;
+    box-shadow: 0 0 10px rgba(255,255,255,0.8);
+}
+
+/* 숫자 표시 */
+.gauge-text {
+    margin-top: -40px; /* 게이지 안쪽으로 올림 */
+    position: relative;
+    z-index: 20;
+}
+
+#duty-val {
+    font-size: 3.5rem;
     font-weight: bold;
+    color: #fff;
 }
 
-.sub-text {
-    font-size: 1rem;
+.unit {
+    font-size: 1.5rem;
     color: #888;
-    margin-top: 10px;
+}
+
+.status-msg {
+    margin-top: 30px;
+    color: #666;
+    font-size: 0.9rem;
 }
