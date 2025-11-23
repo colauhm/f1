@@ -121,3 +121,48 @@ h1 {
     color: #666;
     font-size: 0.9rem;
 }
+/* ... 기존 스타일 유지 ... */
+
+/* [추가] 경고 박스 스타일 */
+.warning-box {
+    position: fixed;
+    top: 20%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: rgba(255, 0, 0, 0.9); /* 반투명 빨강 */
+    color: white;
+    padding: 20px 40px;
+    border-radius: 10px;
+    text-align: center;
+    z-index: 1000; /* 제일 위에 뜨도록 */
+    box-shadow: 0 0 20px rgba(255, 0, 0, 0.8);
+    border: 3px solid #ff5555;
+    
+    /* 깜빡이는 애니메이션 적용 */
+    animation: blink-warning 0.5s infinite alternate;
+}
+
+.warning-icon {
+    font-size: 1.5rem;
+    font-weight: bold;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    color: #ffff00; /* 노란색 텍스트 */
+}
+
+.warning-msg {
+    font-size: 1.2rem;
+    font-weight: 500;
+}
+
+/* 깜빡임 키프레임 정의 */
+@keyframes blink-warning {
+    from {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+    to {
+        opacity: 0.7;
+        transform: translate(-50%, -50%) scale(1.05); /* 살짝 커짐 */
+    }
+}

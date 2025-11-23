@@ -5,12 +5,13 @@ import serial
 from collections import deque
 from fastapi import APIRouter, WebSocket
 
-# ---- 1. 하드웨어 라이브러리 설정 ----
+# ---- 1. OS 판별 및 하드웨어 라이브러리 설정 ----
 try:
     import RPi.GPIO as GPIO
     PLATFORM = "LINUX"
 except ImportError:
     PLATFORM = "WINDOWS"
+    # 윈도우용 가짜 GPIO (에러 방지용)
     class MockGPIO:
         BCM = "BCM"; OUT = "OUT"
         def setmode(self, m): pass
@@ -25,48 +26,50 @@ except ImportError:
             def stop(self): pass
     GPIO = MockGPIO()
 
-# [중요] 경로 설정 (403 오류 방지를 위해 /ws로 통일)
+# 라우터 설정 (경로: /ws)
 router = APIRouter(prefix="/ws")
 
-# ---- 2. 핀 설정 (바퀴 2개) ----
-# [Motor A - 왼쪽 바퀴]
+# ---- 2. 핀 설정 (듀얼 모터) ----
+# [Motor A - 왼쪽]
 PWM_A_PIN = 13
 IN1_PIN = 23
 IN2_PIN = 24
 
-# [Motor B - 오른쪽 바퀴] (새로 추가됨)
+# [Motor B - 오른쪽]
 PWM_B_PIN = 12
 IN3_PIN = 5
 IN4_PIN = 6
 
+# 아두이노 시리얼 설정
 SERIAL_PORT = '/dev/ttyUSB0'
 BAUD_RATE = 9600
 
-# ---- 3. 주행 설정 ----
-PEDAL_TOTAL_ANGLE = 45.0
-CRITICAL_ANGULAR_VELOCITY = 310
-RAPID_PRESS_COUNT = 3
-RAPID_PRESS_WINDOW = 2.0
-SAFETY_LOCK_DURATION = 5.0
+# ---- 3. 주행 및 안전 설정 ----
+PEDAL_TOTAL_ANGLE = 45.0       # 페달 총 각도
+CRITICAL_ANGULAR_VELOCITY = 310 # 급가속 판단 기준 (deg/s)
+RAPID_PRESS_COUNT = 3          # 과속 연타 횟수 기준
+RAPID_PRESS_WINDOW = 2.0       # 연타 감지 시간(초)
+SAFETY_LOCK_DURATION = 5.0     # 안전 제한 지속 시간(초)
 
-SAFETY_SPEED = 15       # 위험 시 정지
-IDLE_SPEED = 15        # 공회전 속도
-IDLE_TIMEOUT = 5.0     # 자동 정지 시간
+SAFETY_SPEED = 15       # 제한 걸렸을 때 속도
+IDLE_SPEED = 15         # 기본 공회전 속도
+IDLE_TIMEOUT = 5.0      # 자동 정지 대기 시간
 
-# ---- 전역 변수 ----
-current_duty = 0.0
-current_pedal_raw = 0
-stop_threads = False
+# ---- 전역 변수 (스레드 간 공유) ----
+current_duty = 0.0          # 현재 모터 출력 (%)
+current_pedal_raw = 0       # 현재 페달 값 (0~100)
+current_safety_reason = None # [핵심] 현재 제한 원인 (None이면 정상)
+stop_threads = False        # 스레드 종료 플래그
 
-# ---- 4. 하드웨어 제어 루프 ----
+# ---- 4. 하드웨어 제어 루프 (스레드) ----
 def hardware_loop():
-    global current_duty, current_pedal_raw, stop_threads
+    global current_duty, current_pedal_raw, current_safety_reason, stop_threads
 
     # GPIO 초기화
     GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
 
-    # 핀 모드 설정 (Motor A + Motor B)
+    # 핀 모드 설정
     GPIO.setup(PWM_A_PIN, GPIO.OUT)
     GPIO.setup(IN1_PIN, GPIO.OUT)
     GPIO.setup(IN2_PIN, GPIO.OUT)
@@ -75,7 +78,7 @@ def hardware_loop():
     GPIO.setup(IN3_PIN, GPIO.OUT)
     GPIO.setup(IN4_PIN, GPIO.OUT)
 
-    # PWM 시작 (두 바퀴 모두)
+    # PWM 시작
     pwm_a = GPIO.PWM(PWM_A_PIN, 1000)
     pwm_a.start(0)
     
@@ -83,14 +86,10 @@ def hardware_loop():
     pwm_b.start(0)
 
     # 방향 설정 (전진)
-    # 만약 바퀴가 거꾸로 돌면 True/False를 반대로 바꾸세요.
-    GPIO.output(IN1_PIN, True)   # Motor A
-    GPIO.output(IN2_PIN, False)
-    
-    GPIO.output(IN3_PIN, True)   # Motor B
-    GPIO.output(IN4_PIN, False)
+    GPIO.output(IN1_PIN, True); GPIO.output(IN2_PIN, False)
+    GPIO.output(IN3_PIN, True); GPIO.output(IN4_PIN, False)
 
-    # 로직 변수들
+    # 로직용 변수들
     press_timestamps = deque()
     override_end_time = 0
     last_pedal_value = 0
@@ -102,83 +101,101 @@ def hardware_loop():
     
     ser = None
     try:
+        # 리눅스일 때만 실제 시리얼 연결
         if PLATFORM == "LINUX":
             ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
             ser.flush()
-            print("HW Loop: 아두이노 연결 성공! 듀얼 모터 제어 시작.")
+            print("HW Loop: 아두이노 연결 성공! 제어 시작.")
 
         while not stop_threads:
-            if ser is None and PLATFORM == "LINUX":
-                # 연결 끊기면 재접속 시도 로직 (선택사항)
-                time.sleep(1)
+            # 윈도우 테스트용 (시리얼 없으면 대기)
+            if ser is None:
+                if PLATFORM == "WINDOWS": time.sleep(1)
                 continue
             
-            # 윈도우 테스트용 가짜 데이터
-            if ser is None: 
-                time.sleep(1); continue
-
+            # 시리얼 데이터 읽기
             if ser.in_waiting > 0:
                 try:
                     line = ser.readline().decode('utf-8').strip()
-                    if not line.isdigit():
-                        continue
+                    if not line.isdigit(): continue
 
                     # --- 데이터 처리 ---
                     current_pedal_value = int(line)
-                    if current_pedal_value < 0: current_pedal_value = 0
-                    if current_pedal_value > 100: current_pedal_value = 100
+                    # 범위 제한 (0~100)
+                    current_pedal_value = max(0, min(100, current_pedal_value))
                     
                     current_pedal_raw = current_pedal_value
                     current_time = time.time()
 
-                    # ================= [속도 계산 로직] =================
-                    # (이전과 동일한 로직)
+                    # ================= [안전 및 속도 계산 로직] =================
                     
+                    # 1. 안전 제한 시간이 지났는지 확인 -> 지났으면 경고 해제
+                    if current_time > override_end_time:
+                        current_safety_reason = None 
+
+                    # 2. 현재 안전 제한 상태인지 확인
                     if current_time < override_end_time:
+                        # [제한 상태]
                         target_speed = SAFETY_SPEED
-                        last_pedal_active_time = current_time
+                        last_pedal_active_time = current_time # 제한 중에는 공회전 타이머 리셋
+                    
                     else:
+                        # [정상 감지 상태]
                         trigger_safety = False
+                        detected_reason = "" # 감지된 원인 임시 저장
+
                         dt = current_time - last_time
+                        
+                        # A. 급가속 감지
                         if dt > 0:
                             delta_percent = current_pedal_value - last_pedal_value
                             delta_angle = (delta_percent / 100.0) * PEDAL_TOTAL_ANGLE
                             angular_velocity = delta_angle / dt
+                            
                             if angular_velocity >= CRITICAL_ANGULAR_VELOCITY:
-                                print(f"!!! 급가속 ({angular_velocity:.1f} deg/s)")
+                                print(f"!!! 급가속 감지 ({angular_velocity:.1f} deg/s)")
                                 trigger_safety = True
+                                detected_reason = "⚠️ 급발진 감지! (Sudden Accel)"
 
+                        # B. 과속 연타 감지
                         is_over_90 = (current_pedal_value >= 90)
                         if is_over_90 and not prev_over_90:
                             press_timestamps.append(current_time)
                         
+                        # 오래된 기록 삭제
                         while press_timestamps and press_timestamps[0] < current_time - RAPID_PRESS_WINDOW:
                             press_timestamps.popleft()
 
                         if len(press_timestamps) >= RAPID_PRESS_COUNT:
-                            print(f"!!! 과속 연타 ({len(press_timestamps)}회)")
+                            print(f"!!! 과속 연타 감지 ({len(press_timestamps)}회)")
                             trigger_safety = True
+                            detected_reason = "🚫 과속 페달 연타! (Rapid Press)"
                             press_timestamps.clear()
                         
                         prev_over_90 = is_over_90
 
+                        # [결과 적용]
                         if trigger_safety:
+                            # 제한 발동!
                             override_end_time = current_time + SAFETY_LOCK_DURATION
                             target_speed = SAFETY_SPEED
+                            current_safety_reason = detected_reason # 웹으로 보낼 원인 저장
                         else:
+                            # 정상 주행
                             if current_pedal_value > 0:
                                 last_pedal_active_time = current_time
                                 target_speed = max(current_pedal_value, IDLE_SPEED)
                             else:
+                                # 페달 뗀 상태 -> 일정 시간 후 완전 정지
                                 idle_duration = current_time - last_pedal_active_time
                                 if idle_duration >= IDLE_TIMEOUT:
                                     target_speed = 0
                                 else:
                                     target_speed = IDLE_SPEED
 
-                    # ================= [모터 2개 동시 제어] =================
-                    pwm_a.ChangeDutyCycle(target_speed) # 왼쪽 바퀴
-                    pwm_b.ChangeDutyCycle(target_speed) # 오른쪽 바퀴
+                    # ================= [모터 출력 적용] =================
+                    pwm_a.ChangeDutyCycle(target_speed)
+                    pwm_b.ChangeDutyCycle(target_speed)
                     
                     current_duty = target_speed
 
@@ -188,14 +205,15 @@ def hardware_loop():
                 except ValueError:
                     pass
                 except Exception as e:
-                    print(f"HW Loop Error: {e}")
+                    print(f"Logic Error: {e}")
 
+            # 루프 속도 조절
             time.sleep(0.01)
 
     except serial.SerialException:
-        print("아두이노 연결 실패! 케이블 확인 필요.")
+        print("아두이노 연결 실패! 케이블을 확인하세요.")
     except Exception as e:
-        print(f"치명적 오류: {e}")
+        print(f"Critical Error: {e}")
     finally:
         pwm_a.stop()
         pwm_b.stop()
@@ -204,21 +222,30 @@ def hardware_loop():
             ser.close()
         print("Hardware Thread Stopped.")
 
+# ---- 5. 외부에서 실행할 함수 ----
 def start_hardware():
     t = threading.Thread(target=hardware_loop, daemon=True)
     t.start()
 
+# ---- 6. 웹소켓 엔드포인트 ----
 @router.websocket("")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     try:
         while True:
             if stop_threads: break
+            
+            # 웹으로 보낼 데이터 패키지
             payload = {
                 "duty": round(current_duty, 1),
-                "pedal": current_pedal_raw
+                "pedal": current_pedal_raw,
+                "reason": current_safety_reason  # None이면 경고창 꺼짐, 값이 있으면 켜짐
             }
+            
             await websocket.send_json(payload)
+            
+            # 전송 주기 (20 FPS)
             await asyncio.sleep(0.05)
+            
     except Exception as e:
         print(f"WebSocket Disconnected: {e}")
