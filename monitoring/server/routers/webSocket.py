@@ -39,7 +39,7 @@ PWM_B_PIN = 12
 IN3_PIN = 5
 IN4_PIN = 6
 
-SERIAL_PORT = '/dev/ttyACM0'
+SERIAL_PORT = '/dev/ttyUSB0'
 BAUD_RATE = 9600
 
 # ---- 3. 주행 설정 ----
