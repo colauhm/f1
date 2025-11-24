@@ -1,55 +1,61 @@
 import numpy as np
 import sounddevice as sd
+import os
 import time
 
-def beep(frequency, duration, volume=0.5):
-    """
-    frequency: 주파수 (Hz)
-    duration: 지속 시간 (초)
-    volume: 소리 크기 (0.0 ~ 1.0)
-    """
-    sample_rate = 44100
-    # 시간축 생성
+def set_volume_max():
+    """시스템 볼륨을 100%로 강제 설정"""
+    # -c 3은 네 환경(카드 3번)에 맞춘 것
+    os.system("amixer -c 3 set PCM 100% > /dev/null 2>&1")
+
+def generate_square_wave(freq, duration, sample_rate=44100):
+    """찢어지는 듯한 사각파(Square Wave) 생성"""
     t = np.linspace(0, duration, int(sample_rate * duration), False)
-    # 사인파 생성 (소리 데이터)
-    wave = np.sin(frequency * t * 2 * np.pi)
-    # 볼륨 적용 및 데이터 타입 변환 (float32)
-    wave = (wave * volume).astype(np.float32)
+    # np.sign을 사용하면 둥근 사인파가 네모난 사각파로 바뀌어 소리가 훨씬 거칠어짐
+    wave = np.sign(np.sin(freq * t * 2 * np.pi))
+    return wave.astype(np.float32)
+
+def play_emergency_siren(duration=2.0):
+    sample_rate = 44100
     
-    # 재생 (blocking=True: 소리 끝날 때까지 대기)
-    sd.play(wave, sample_rate, blocking=True)
+    # 1. 소리 패턴 만들기 (0.15초씩 고음-저음 반복)
+    # 1200Hz(고음)과 600Hz(저음)을 섞으면 매우 긴박하게 들림
+    high_tone = generate_square_wave(1200, 0.15, sample_rate)
+    low_tone = generate_square_wave(600, 0.15, sample_rate)
+    
+    # 두 소리를 합쳐서 하나의 사이렌 주기(0.3초)를 만듦
+    cycle = np.concatenate([high_tone, low_tone])
+    
+    # 2. 2초 동안 반복되도록 복사 붙여넣기
+    # 필요한 반복 횟수 계산
+    repeats = int(duration / 0.3) + 1
+    # 소리 패턴을 반복해서 긴 배열로 만듦
+    full_siren = np.tile(cycle, repeats)
+    
+    # 정확히 duration 길이만큼 자르기
+    total_samples = int(sample_rate * duration)
+    full_siren = full_siren[:total_samples]
+    
+    # 3. 재생 (Volume 0.8로 낮춰도 사각파라 충분히 시끄러움. 필요하면 1.0으로)
+    sd.play(full_siren * 0.5, sample_rate, blocking=True)
 
-# ---- 1. 장치 확인 (터미널 출력 확인용) ----
-print("=== 현재 연결된 오디오 장치 목록 ===")
-print(sd.query_devices())
-print("=====================================")
+# ---- 실행 ----
 
-# [중요] 아까 카드 3번이었으므로, 장치 번호를 설정해야 함.
-# 목록을 보고 USB Audio의 번호를 적어주면 됨. (보통 3, 4번 쯤에 있음)
-# 만약 ~/.asoundrc 설정을 했다면 이 줄을 지워도 됨.
+# 1. 장치 설정 (아까 확인한 3번으로 고정)
 try:
-    # 일단 3번으로 시도해봄 (안되면 목록 보고 수정)
-    sd.default.device = 3 
+    sd.default.device = 3
 except:
-    print("장치 설정 실패: 기본 장치로 시도합니다.")
+    pass
 
-# ---- 2. 소리 테스트 ----
-print("테스트 시작...")
+print("🚨 재난 경보 발령! (2초간 재생)")
 
-print("도 (261 Hz)")
-beep(261.63, 0.5) 
+# 볼륨 최대로!
+set_volume_max()
 
-print("미 (329 Hz)")
-beep(329.63, 0.5)
+# 사이렌 울림
+play_emergency_siren(2.0)
 
-print("솔 (392 Hz)")
-beep(392.00, 0.5)
+print("🚨 경보 종료")
 
-time.sleep(0.5)
-
-print("!!! 경고음 테스트 (삐-삐-삐) !!!")
-for _ in range(3):
-    beep(1000, 0.1, volume=0.8) # 1000Hz 고음, 짧게
-    time.sleep(0.1)
-
-print("테스트 완료")
+# (선택) 귀가 아프다면 다시 볼륨을 줄여놓는 코드 추가
+os.system("amixer -c 3 set PCM 70% > /dev/null 2>&1")
