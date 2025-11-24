@@ -4,9 +4,9 @@ import os
 import time
 
 def set_volume_max():
-    """시스템 볼륨을 100%로 강제 설정"""
+   
     # -c 3은 네 환경(카드 3번)에 맞춘 것
-    os.system("amixer -c 3 set PCM 100% > /dev/null 2>&1")
+    os.system("amixer -c 3 set PCM 20% > /dev/null 2>&1")
 
 def generate_square_wave(freq, duration, sample_rate=44100):
     """찢어지는 듯한 사각파(Square Wave) 생성"""
