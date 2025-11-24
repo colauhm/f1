@@ -153,6 +153,10 @@ h1 {
 .warning-msg {
     font-size: 1.2rem;
     font-weight: 500;
+    
+    /* [수정됨] 줄바꿈(\n)을 인식하도록 설정 */
+    white-space: pre-line; 
+    line-height: 1.5; /* 줄 간격 확보 */
 }
 
 /* 깜빡임 키프레임 정의 */
