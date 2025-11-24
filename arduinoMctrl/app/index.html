@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RC Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+    <div class="dashboard-container">
+        <div id="warning-dialog" class="warning-box" style="display: none;">
+            <div class="warning-icon">WARNING</div>
+            <div id="warning-text" class="warning-msg">안전 제한 작동 중</div>
+        </div>
+
+        <h1>MOTOR POWER</h1>
+
+        <div class="gauge-wrapper">
+             <div class="gauge-body">
+                <div class="gauge-bg"></div>
+                <div class="gauge-cover"></div>
+                <div id="needle" class="needle"></div>
+            </div>
+            <div class="gauge-text">
+                <span id="duty-val">0</span><span class="unit">%</span>
+            </div>
+        </div>
+
+        <div class="pedal-info">
+             Pedal Input: <span id="pedal-val">0</span>
+        </div>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
