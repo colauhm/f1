@@ -4,6 +4,11 @@ import time
 import serial
 from collections import deque
 from fastapi import APIRouter, WebSocket
+import os
+
+# ---- [추가] 사운드 관련 라이브러리 ----
+import numpy as np
+import sounddevice as sd
 
 # ---- 1. OS 판별 및 하드웨어 라이브러리 설정 ----
 try:
@@ -23,7 +28,7 @@ except ImportError:
             def start(self, d): pass
             def ChangeDutyCycle(self, d): pass
             def stop(self): pass
-    GPIO = MockGPIO()
+        GPIO = MockGPIO()
 
 router = APIRouter(prefix="/ws")
 
@@ -45,12 +50,66 @@ SAFETY_SPEED = 15
 IDLE_SPEED = 15
 IDLE_TIMEOUT = 5.0
 
+# ---- [추가] 오디오 설정 ----
+AUDIO_CARD_ID = 3  # 사용자 환경에 맞춘 오디오 카드 번호
+
 # ---- 전역 변수 ----
 current_duty = 0.0
 current_pedal_raw = 0
 current_safety_reason = None
-current_remaining_time = 0  # [수정됨] 남은 시간 표시용 변수 추가
+current_remaining_time = 0
 stop_threads = False
+
+# ---- [추가] 사이렌 재생 함수 (쓰레드용) ----
+def play_siren_thread():
+    """
+    모터 제어 루프를 방해하지 않기 위해 별도 쓰레드에서 소리를 재생합니다.
+    """
+    def _run_siren():
+        try:
+            # 1. 장치 설정
+            try:
+                sd.default.device = AUDIO_CARD_ID
+            except Exception as e:
+                print(f"[Audio Error] Device setup failed: {e}")
+                return
+
+            print("🚨 공습 경보 발령! (소리 재생 시작)")
+            
+            # 2. 볼륨 설정 (사용자 요청: 20%)
+            os.system(f"amixer -c {AUDIO_CARD_ID} set PCM 20% > /dev/null 2>&1")
+
+            # 3. 파형 생성 (상승-하강 사각파)
+            duration = 3.0
+            start_freq = 400
+            end_freq = 1500
+            sample_rate = 44100
+            
+            total_samples = int(sample_rate * duration)
+            half_samples = total_samples // 2
+
+            # 주파수 스윕 생성
+            freq_up = np.linspace(start_freq, end_freq, half_samples)
+            freq_down = np.linspace(end_freq, start_freq, total_samples - half_samples)
+            frequencies = np.concatenate([freq_up, freq_down])
+
+            # 위상 계산 및 사각파 생성
+            phases = 2 * np.pi * np.cumsum(frequencies) / sample_rate
+            wave = np.sign(np.sin(phases)).astype(np.float32)
+
+            # 4. 재생 (blocking=True여도 이 함수는 메인 루프와 별개이므로 상관없음)
+            sd.play(wave * 0.5, sample_rate, blocking=True)
+            
+            # 5. 볼륨 원복 (선택사항)
+            os.system(f"amixer -c {AUDIO_CARD_ID} set PCM 70% > /dev/null 2>&1")
+            print("🚨 소리 재생 종료")
+
+        except Exception as e:
+            print(f"[Audio Error] Playback failed: {e}")
+
+    # 별도 쓰레드로 실행하여 메인 루프 지연 방지
+    threading.Thread(target=_run_siren, daemon=True).start()
+
 
 # ---- 4. 하드웨어 제어 루프 ----
 def hardware_loop():
@@ -74,9 +133,9 @@ def hardware_loop():
     prev_over_90 = False
     last_pedal_active_time = time.time()
     
-    # [수정됨] 안전 모드 상태 관리 변수
+    # 안전 모드 상태 관리 변수
     safety_lock_active = False 
-    safety_cause_msg = "" # 최초 차단 원인 저장
+    safety_cause_msg = "" 
 
     print(f"HW Loop: 포트 {SERIAL_PORT} 연결 시도...")
     ser = None
@@ -92,16 +151,15 @@ def hardware_loop():
                 try: ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1); ser.flush()
                 except: time.sleep(1); continue
             elif ser is None and PLATFORM == "WINDOWS":
-                time.sleep(0.1) # 윈도우 테스트용 더미 딜레이
+                time.sleep(0.1)
 
-            # 시리얼 읽기 (윈도우 테스트 시에는 임의 값 사용 필요)
+            # 시리얼 읽기
             raw_line = ""
             if ser and ser.in_waiting > 0:
                 raw_line = ser.readline().decode('utf-8').strip()
             
-            # (테스트용) 윈도우나 시리얼 없을 때 로직 흐름 유지를 위해
             if not raw_line and PLATFORM == "WINDOWS": 
-                pass # 실제 환경에선 주석 처리
+                pass 
 
             if raw_line.isdigit():
                 current_pedal_value = int(raw_line)
@@ -109,33 +167,28 @@ def hardware_loop():
                 current_pedal_raw = current_pedal_value
                 current_time = time.time()
 
-                # ================= [수정된 안전 로직 시작] =================
+                # ================= [안전 로직] =================
                 trigger_safety = False
                 detected_reason = ""
 
                 # 1. 안전 모드가 활성화된 상태라면?
                 if safety_lock_active:
                     remaining = override_end_time - current_time
-                    current_remaining_time = max(0, int(remaining)) # 남은 시간 업데이트
+                    current_remaining_time = max(0, int(remaining))
 
                     if remaining > 0:
-                        # [상태 A] 아직 제한 시간이 남음
                         current_safety_reason = f"{safety_cause_msg}\n(해제까지 {current_remaining_time}초)"
                         target_speed = SAFETY_SPEED
-                        last_pedal_active_time = current_time # 제한 중엔 공회전 카운트 리셋
-                    
+                        last_pedal_active_time = current_time 
                     else:
-                        # [상태 B] 시간은 지났지만 페달을 떼지 않음
                         if current_pedal_value > 0:
                             current_safety_reason = "⚠️ 엑셀에서 발을 떼세요!\n(안전 잠금 해제 대기중)"
                             target_speed = SAFETY_SPEED
                         else:
-                            # [상태 C] 시간도 지났고, 페달도 0임 -> 해제!
                             safety_lock_active = False
                             current_safety_reason = None
                             current_remaining_time = 0
                             print(">>> 안전 잠금 해제됨")
-                            # 바로 정상 주행 로직으로 넘어가도록 설정
                             target_speed = 0 
 
                 # 2. 정상 주행 상태 (감지 로직 수행)
@@ -172,8 +225,10 @@ def hardware_loop():
                         override_end_time = current_time + SAFETY_LOCK_DURATION
                         target_speed = SAFETY_SPEED
                         current_remaining_time = int(SAFETY_LOCK_DURATION)
+                        
+                        # [중요] 여기서 소리 재생 함수 호출!
+                        play_siren_thread()
                     else:
-                        # 평상시 주행 (공회전 로직)
                         if current_pedal_value > 0:
                             last_pedal_active_time = current_time
                             target_speed = max(current_pedal_value, IDLE_SPEED)
@@ -203,7 +258,7 @@ def start_hardware():
     t = threading.Thread(target=hardware_loop, daemon=True)
     t.start()
 
-# ---- 5. 웹소켓 수정 ----
+# ---- 5. 웹소켓 ----
 @router.websocket("")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -214,7 +269,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 "duty": round(current_duty, 1),
                 "pedal": current_pedal_raw,
                 "reason": current_safety_reason,
-                "remaining_time": current_remaining_time # [수정됨] 남은 시간 전송
+                "remaining_time": current_remaining_time
             }
             await websocket.send_json(payload)
             await asyncio.sleep(0.05)
