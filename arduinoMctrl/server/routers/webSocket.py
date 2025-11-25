@@ -51,7 +51,7 @@ IDLE_SPEED = 15
 IDLE_TIMEOUT = 5.0
 
 # ---- [추가] 오디오 설정 ----
-AUDIO_CARD_ID = 3  # 사용자 환경에 맞춘 오디오 카드 번호
+AUDIO_CARD_ID = 1  # 사용자 환경에 맞춘 오디오 카드 번호
 
 # ---- 전역 변수 ----
 current_duty = 0.0
