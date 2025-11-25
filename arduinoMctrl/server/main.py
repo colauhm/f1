@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 
 # 작성한 webSocket 모듈 임포트
-from .routers import webSocket
+from .routers import pedalLogic
 
 # ---- 경로 설정 ----
 current_file_path = os.path.abspath(__file__)
@@ -27,10 +27,10 @@ print(f"---------------------------------------------------")
 async def lifespan(app: FastAPI):
     print("Hardware Threads Starting...")
     # 여기서 모터 제어 스레드를 실행합니다!
-    webSocket.start_hardware()
+    pedalLogic.start_hardware()
     yield
     print("Server Shutting Down...")
-    webSocket.stop_threads = True # 스레드 종료 신호
+    pedalLogic.stop_threads = True # 스레드 종료 신호
 
 app = FastAPI(lifespan=lifespan)
 
@@ -45,7 +45,7 @@ app.add_middleware(
 )
 
 # 라우터 등록 ( /ws 경로 )
-app.include_router(webSocket.router)
+app.include_router(pedalLogic.router)
 
 # 정적 파일 및 루트 경로
 app.mount("/static", StaticFiles(directory=APP_DIR), name="static")
