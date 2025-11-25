@@ -60,10 +60,11 @@ current_safety_reason = None
 current_remaining_time = 0
 stop_threads = False
 
-# ---- [추가] 사이렌 재생 함수 (쓰레드용) ----
+# ---- [수정됨] 경고음 재생 함수 (쓰레드용) ----
 def play_siren_thread():
     """
     모터 제어 루프를 방해하지 않기 위해 별도 쓰레드에서 소리를 재생합니다.
+    기존 사이렌 대신 무거운 '삐- 삐- 삐-' 소리를 재생합니다.
     """
     def _run_siren():
         try:
@@ -74,31 +75,32 @@ def play_siren_thread():
                 print(f"[Audio Error] Device setup failed: {e}")
                 return
 
-            print("🚨 공습 경보 발령! (소리 재생 시작)")
+            print("🚨 경고음 발령! (소리 재생 시작)")
             
             # 2. 볼륨 설정 (사용자 요청: 20%)
             os.system(f"amixer -c {AUDIO_CARD_ID} set PCM 20% > /dev/null 2>&1")
 
-            # 3. 파형 생성 (상승-하강 사각파)
-            duration = 3.0
-            start_freq = 400
-            end_freq = 1500
+            # 3. 파형 생성 (무거운 삐- 삐- 삐- 소리)
             sample_rate = 44100
-            
-            total_samples = int(sample_rate * duration)
-            half_samples = total_samples // 2
+            beep_freq = 500       # 주파수 (낮을수록 무거운 소리, 500Hz 설정)
+            beep_duration = 0.5   # 삐- 지속 시간 (초)
+            silence_duration = 0.5 # 멈춤 지속 시간 (초)
+            repeats = 3           # 반복 횟수 (0.5초 삐 + 0.5초 멈춤 x 3회 = 총 3초)
 
-            # 주파수 스윕 생성
-            freq_up = np.linspace(start_freq, end_freq, half_samples)
-            freq_down = np.linspace(end_freq, start_freq, total_samples - half_samples)
-            frequencies = np.concatenate([freq_up, freq_down])
+            # 단일 '삐-' 소리 생성 (사각파로 무거운 느낌)
+            # np.sign(np.sin(...))을 사용하여 사인파를 사각파로 변환합니다.
+            t_beep = np.linspace(0, beep_duration, int(sample_rate * beep_duration), endpoint=False)
+            beep_wave = np.sign(np.sin(2 * np.pi * beep_freq * t_beep)).astype(np.float32)
 
-            # 위상 계산 및 사각파 생성
-            phases = 2 * np.pi * np.cumsum(frequencies) / sample_rate
-            wave = np.sign(np.sin(phases)).astype(np.float32)
+            # '무음' 구간 생성
+            silence_wave = np.zeros(int(sample_rate * silence_duration), dtype=np.float32)
+
+            # [삐, 무음] 패턴을 반복하여 전체 파형 완성
+            full_wave = np.concatenate([beep_wave, silence_wave] * repeats)
 
             # 4. 재생 (blocking=True여도 이 함수는 메인 루프와 별개이므로 상관없음)
-            sd.play(wave * 0.5, sample_rate, blocking=True)
+            # 사각파는 소리가 크므로 볼륨을 0.5배로 낮춰서 재생합니다.
+            sd.play(full_wave * 0.5, sample_rate, blocking=True)
             
             # 5. 볼륨 원복 (선택사항)
             os.system(f"amixer -c {AUDIO_CARD_ID} set PCM 70% > /dev/null 2>&1")
