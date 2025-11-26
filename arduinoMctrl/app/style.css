@@ -12,14 +12,48 @@ body {
 
 .dashboard-container {
     text-align: center;
+    width: 90%; /* 화면 넓게 쓰기 */
+    max-width: 1200px;
 }
 
 h1 {
     font-weight: 200;
     letter-spacing: 2px;
-    margin-bottom: 40px; /* 기존 20px -> 40px로 늘림 */
+    margin-bottom: 40px;
     color: #00d2ff;
     text-shadow: 0 0 10px rgba(0, 210, 255, 0.5);
+}
+
+/* [추가] 게이지와 차트를 가로로 배치하는 컨테이너 */
+.main-display {
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    gap: 50px; /* 게이지와 차트 사이 간격 */
+    flex-wrap: wrap; /* 화면 작으면 줄바꿈 */
+}
+
+/* [추가] 차트 영역 스타일 */
+.chart-section {
+    width: 500px;  /* 그래프 너비 */
+    height: 300px; /* 그래프 높이 */
+    background: rgba(255, 255, 255, 0.05); /* 배경 살짝 밝게 */
+    border-radius: 15px;
+    padding: 15px;
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
+    border: 1px solid #333;
+}
+
+/* 기존 게이지 스타일 유지... */
+.gauge-wrapper {
+    position: relative;
+    width: 300px;
+    height: auto;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
 }
 
 /* --- 게이지 스타일 --- */
