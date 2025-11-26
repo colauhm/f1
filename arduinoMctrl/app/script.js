@@ -7,79 +7,86 @@ const pedalText = document.getElementById("pedal-val");
 const warningBox = document.getElementById("warning-dialog");
 const warningText = document.getElementById("warning-text");
 
-// --- 차트 설정 ---
-const ctx = document.getElementById('powerChart').getContext('2d');
-
-let dataBuffer = [];
+// 버퍼 2개 생성
+let pedalBuffer = [];
+let motorBuffer = [];
 const MAX_STORE_MINUTES = 5; 
-let viewSeconds = 60; // 기본 1분
+let viewSeconds = 60; 
 
-const powerChart = new Chart(ctx, {
-    type: 'line',
-    data: {
-        datasets: [{
-            label: 'Pedal Value',
-            data: dataBuffer, // 버퍼 직접 참조
-            borderWidth: 1.5,
-            fill: true,
-            backgroundColor: 'rgba(57, 255, 20, 0.1)',
-            
-            // [중요] 스파이크 표현을 위해 곡선 끄기
-            tension: 0, 
-            pointRadius: 0, 
-            spanGaps: true,
-            borderJoinStyle: 'round',
-
-            segment: {
-                borderColor: ctx => {
-                    // 제한 상태(restricted=true)면 빨간색
-                    if (ctx.p1.raw && ctx.p1.raw.restricted) return '#ff0000';
-                    return '#39ff14';
+// 공통 차트 옵션 생성 함수
+function createChartConfig(buffer, label) {
+    return {
+        type: 'line',
+        data: {
+            datasets: [{
+                label: label,
+                data: buffer,
+                borderWidth: 1.5,
+                fill: true,
+                backgroundColor: 'rgba(57, 255, 20, 0.1)',
+                tension: 0, 
+                pointRadius: 0, 
+                spanGaps: true,
+                borderJoinStyle: 'round',
+                segment: {
+                    borderColor: ctx => {
+                        if (ctx.p1.raw && ctx.p1.raw.restricted) return '#ff0000';
+                        return '#39ff14';
+                    }
                 }
-            }
-        }]
-    },
-    options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: false, // 애니메이션 꺼야 실시간성 확보
-        interaction: { intersect: false },
-        events: [], // 마우스 이벤트 끔 (성능 최적화)
-        scales: {
-            x: {
-                type: 'linear', 
-                display: true,
-                position: 'bottom',
-                ticks: {
-                    color: '#666',
-                    maxTicksLimit: 6,
-                    callback: val => new Date(val).toLocaleTimeString('ko-KR', { hour12: false })
-                },
-                grid: { display: false }
-            },
-            y: { 
-                min: 0, max: 100, 
-                grid: { color: '#333' }, 
-                ticks: { color: '#888' } 
-            }
+            }]
         },
-        plugins: { 
-            legend: { display: false },
-            tooltip: { enabled: false },
-            decimation: { enabled: false } // 데이터 압축 금지
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: { intersect: false },
+            events: [],
+            scales: {
+                x: {
+                    type: 'linear', 
+                    display: true, 
+                    position: 'bottom',
+                    ticks: {
+                        color: '#666',
+                        maxTicksLimit: 6,
+                        callback: val => new Date(val).toLocaleTimeString('ko-KR', { hour12: false })
+                    },
+                    grid: { display: false }
+                },
+                y: { 
+                    min: 0, max: 100, 
+                    grid: { color: '#333' }, 
+                    ticks: { color: '#888' } 
+                }
+            },
+            plugins: { 
+                legend: { display: false },
+                tooltip: { enabled: false },
+                decimation: { enabled: false }
+            }
         }
-    }
-});
+    };
+}
 
-// 초기 데이터 채우기
+// 차트 2개 생성
+const ctxPedal = document.getElementById('pedalChart').getContext('2d');
+const pedalChart = new Chart(ctxPedal, createChartConfig(pedalBuffer, 'Pedal'));
+
+const ctxMotor = document.getElementById('motorChart').getContext('2d');
+const motorChart = new Chart(ctxMotor, createChartConfig(motorBuffer, 'Motor'));
+
+// 초기 데이터 채우기 (두 버퍼 모두)
 function initChartData() {
     const now = Date.now();
     for (let i = 2000; i > 0; i--) {
-        dataBuffer.push({ x: now - (i * 50), y: 0, restricted: false });
+        const pt = { x: now - (i * 50), y: 0, restricted: false };
+        pedalBuffer.push(pt);
+        motorBuffer.push(pt);
     }
 }
 
-// 시간 모드 변경 (초 단위)
+// 시간 모드 변경 (버튼 하나로 두 차트 제어)
 window.setTimeMode = function(seconds) {
     viewSeconds = seconds;
     document.querySelectorAll('.time-btn').forEach(btn => btn.classList.remove('active'));
@@ -88,6 +95,7 @@ window.setTimeMode = function(seconds) {
     else if (seconds === 30) document.getElementById('btn-30sec').classList.add('active');
     else if (seconds === 60) document.getElementById('btn-1min').classList.add('active');
     
+    // 즉시 갱신
     requestAnimationFrame(updateChartScale);
 };
 
@@ -99,7 +107,7 @@ ws.onmessage = (event) => {
         const current = data.current;
         const history = data.history;
 
-        // 1. 현재 상태 (게이지, 텍스트) 업데이트
+        // 1. 게이지/텍스트 업데이트
         if (current.duty !== undefined) {
             const duty = parseFloat(current.duty);
             valText.innerText = duty.toFixed(0);
@@ -121,34 +129,50 @@ ws.onmessage = (event) => {
             warningBox.style.display = "none";
         }
 
-        // 3. [핵심] 배치 데이터(History)를 차트 버퍼에 모두 추가
+        // 3. [핵심] 배치 데이터 분리하여 각각 저장
         if (history && history.length > 0) {
             history.forEach(pt => {
-                dataBuffer.push({
+                const isRestricted = (pt.r === 1);
+                
+                // 페달 버퍼 (pt.p)
+                pedalBuffer.push({
                     x: pt.t,
-                    y: pt.v,
-                    restricted: pt.r === 1
+                    y: pt.p,
+                    restricted: isRestricted
+                });
+
+                // 모터 버퍼 (pt.d)
+                motorBuffer.push({
+                    x: pt.t,
+                    y: pt.d,
+                    restricted: isRestricted
                 });
             });
         }
     }
 };
 
-// 렌더링 루프 (화면 그리기 전담)
+// 렌더링 루프 (두 차트 모두 갱신)
 function startRenderLoop() {
     function render() {
         const now = Date.now();
-
-        // 오래된 데이터 정리 (성능 유지)
         const limitTime = now - (MAX_STORE_MINUTES * 60 * 1000);
         let removeCount = 0;
-        // 한 번에 너무 많이 지우면 렉 걸리므로 50개씩만 처리
-        while(dataBuffer.length > 0 && dataBuffer[0].x < limitTime && removeCount < 50) {
-            dataBuffer.shift();
+
+        // 오래된 데이터 정리 (페달)
+        while(pedalBuffer.length > 0 && pedalBuffer[0].x < limitTime && removeCount < 50) {
+            pedalBuffer.shift();
+            removeCount++;
+        }
+        
+        // 오래된 데이터 정리 (모터) - 개수가 거의 같겠지만 따로 관리
+        removeCount = 0;
+        while(motorBuffer.length > 0 && motorBuffer[0].x < limitTime && removeCount < 50) {
+            motorBuffer.shift();
             removeCount++;
         }
 
-        updateChartScale(); // 범위 업데이트 및 그리기
+        updateChartScale(); 
         requestAnimationFrame(render);
     }
     requestAnimationFrame(render);
@@ -156,9 +180,17 @@ function startRenderLoop() {
 
 function updateChartScale() {
     const now = Date.now();
-    powerChart.options.scales.x.min = now - (viewSeconds * 1000);
-    powerChart.options.scales.x.max = now;
-    powerChart.update('none');
+    const minTime = now - (viewSeconds * 1000);
+
+    // 페달 차트 갱신
+    pedalChart.options.scales.x.min = minTime;
+    pedalChart.options.scales.x.max = now;
+    pedalChart.update('none');
+
+    // 모터 차트 갱신
+    motorChart.options.scales.x.min = minTime;
+    motorChart.options.scales.x.max = now;
+    motorChart.update('none');
 }
 
 // 시작

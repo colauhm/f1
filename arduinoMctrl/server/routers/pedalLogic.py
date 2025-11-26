@@ -32,33 +32,24 @@ except ImportError:
     GPIO = MockGPIO()
 
 app = FastAPI()
-
-# 정적 파일 마운트 (HTML, CSS, JS 제공용)
-# 현재 디렉토리에 파일들이 있다고 가정
 app.mount("/static", StaticFiles(directory="."), name="static")
-
 router = APIRouter(prefix="/ws")
 
 # ---- 2. 핀 설정 ----
 PWM_A_PIN = 13; IN1_PIN = 23; IN2_PIN = 24
 PWM_B_PIN = 12; IN3_PIN = 5; IN4_PIN = 6
-
-# [중요] 시리얼 속도 상향
 SERIAL_PORT = '/dev/ttyUSB0'
 BAUD_RATE = 115200 
 
-# ---- 3. 주행 및 안전 설정 ----
+# ---- 3. 설정 변수 ----
 PEDAL_TOTAL_ANGLE = 45.0
 CRITICAL_ANGULAR_VELOCITY = 310
 RAPID_PRESS_COUNT = 3
 RAPID_PRESS_WINDOW = 2.0
 SAFETY_LOCK_DURATION = 5.0
-
 SAFETY_SPEED = 15
 IDLE_SPEED = 15
 IDLE_TIMEOUT = 5.0
-
-# 오디오 설정
 AUDIO_CARD_ID = 3 
 
 # ---- 전역 변수 ----
@@ -68,7 +59,7 @@ current_safety_reason = None
 current_remaining_time = 0
 stop_threads = False
 
-# [핵심] 데이터 전송용 큐
+# [데이터 큐]
 data_queue = queue.Queue()
 
 # ---- 경고음 재생 함수 ----
@@ -120,12 +111,9 @@ def hardware_loop():
     safety_lock_active = False 
     safety_cause_msg = "" 
 
-    print(f"HW Loop: 포트 {SERIAL_PORT} 연결 시도...")
     ser = None
     if PLATFORM == "LINUX":
-        try:
-            ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1)
-            ser.flush()
+        try: ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1); ser.flush()
         except: pass
 
     try:
@@ -134,7 +122,6 @@ def hardware_loop():
                 try: ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1); ser.flush()
                 except: time.sleep(1); continue
             
-            # 시리얼 읽기
             raw_line = ""
             if ser and ser.in_waiting > 0:
                 try: raw_line = ser.readline().decode('utf-8').strip()
@@ -146,7 +133,7 @@ def hardware_loop():
                 current_pedal_raw = current_pedal_value
                 current_time = time.time()
 
-                # --- 안전 로직 시작 ---
+                # --- 안전 로직 (생략 없이 기존과 동일) ---
                 trigger_safety = False
                 detected_reason = ""
 
@@ -162,53 +149,40 @@ def hardware_loop():
                             current_safety_reason = "⚠️ 엑셀에서 발을 떼세요!\n(안전 잠금 해제 대기중)"
                             target_speed = SAFETY_SPEED
                         else:
-                            safety_lock_active = False
-                            current_safety_reason = None
-                            current_remaining_time = 0
-                            target_speed = 0 
+                            safety_lock_active = False; current_safety_reason = None
+                            current_remaining_time = 0; target_speed = 0 
                 else:
                     dt = current_time - last_time
                     if dt > 0:
-                        # 급가속 감지
                         delta_percent = current_pedal_value - last_pedal_value
                         delta_angle = (delta_percent / 100.0) * PEDAL_TOTAL_ANGLE
                         angular_velocity = delta_angle / dt
                         
                         if angular_velocity >= CRITICAL_ANGULAR_VELOCITY:
-                            print(f"!!! 급가속: {angular_velocity:.1f}")
-                            trigger_safety = True
-                            detected_reason = "⚠️ 급발진 감지!"
+                            trigger_safety = True; detected_reason = "⚠️ 급발진 감지!"
 
-                        # 과속 연타 감지
                         is_over_90 = (current_pedal_value >= 90)
-                        if is_over_90 and not prev_over_90:
-                            press_timestamps.append(current_time)
+                        if is_over_90 and not prev_over_90: press_timestamps.append(current_time)
                         while press_timestamps and press_timestamps[0] < current_time - RAPID_PRESS_WINDOW:
                             press_timestamps.popleft()
                         if len(press_timestamps) >= RAPID_PRESS_COUNT:
-                            trigger_safety = True
-                            detected_reason = "🚫 과속 페달 연타!"
-                            press_timestamps.clear()
+                            trigger_safety = True; detected_reason = "🚫 과속 페달 연타!"; press_timestamps.clear()
                         prev_over_90 = is_over_90
 
                     if trigger_safety:
-                        safety_lock_active = True
-                        safety_cause_msg = detected_reason
+                        safety_lock_active = True; safety_cause_msg = detected_reason
                         override_end_time = current_time + SAFETY_LOCK_DURATION
-                        target_speed = SAFETY_SPEED
-                        current_remaining_time = int(SAFETY_LOCK_DURATION)
+                        target_speed = SAFETY_SPEED; current_remaining_time = int(SAFETY_LOCK_DURATION)
                         play_siren_thread()
                     else:
                         if current_pedal_value > 0:
                             last_pedal_active_time = current_time
                             target_speed = max(current_pedal_value, IDLE_SPEED)
                         else:
-                            if (current_time - last_pedal_active_time) >= IDLE_TIMEOUT:
-                                target_speed = 0
-                            else:
-                                target_speed = IDLE_SPEED
+                            if (current_time - last_pedal_active_time) >= IDLE_TIMEOUT: target_speed = 0
+                            else: target_speed = IDLE_SPEED
 
-                # 모터 적용
+                # 모터 제어
                 pwm_a.ChangeDutyCycle(target_speed)
                 pwm_b.ChangeDutyCycle(target_speed)
                 current_duty = target_speed
@@ -216,18 +190,17 @@ def hardware_loop():
                 last_pedal_value = current_pedal_value
                 last_time = current_time
 
-                # [핵심] 큐에 데이터 적재 (Timestamp는 ms 단위로 변환)
+                # [핵심 수정] 큐에 페달(p)과 모터속도(d)를 같이 넣음
                 data_queue.put({
                     "t": current_time * 1000, 
-                    "v": current_pedal_value,  # 페달값 그래프 (원하면 current_duty로 변경)
+                    "p": current_pedal_value,  # 페달 입력
+                    "d": current_duty,         # 모터 속도 (Duty)
                     "r": 1 if safety_lock_active else 0
                 })
 
-            # 고속 루프 (0.01초)
             time.sleep(0.01)
 
-    except Exception as e:
-        print(f"Error: {e}")
+    except Exception as e: print(f"Error: {e}")
     finally:
         pwm_a.stop(); pwm_b.stop(); GPIO.cleanup()
         if ser and ser.is_open: ser.close()
@@ -244,13 +217,10 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             if stop_threads: break
             
-            # 큐에 쌓인 데이터 몽땅 꺼내기 (Batch)
             history_batch = []
             while not data_queue.empty():
-                try:
-                    history_batch.append(data_queue.get_nowait())
-                except queue.Empty:
-                    break
+                try: history_batch.append(data_queue.get_nowait())
+                except queue.Empty: break
             
             payload = {
                 "type": "batch",
@@ -262,13 +232,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     "remaining_time": current_remaining_time
                 }
             }
-            
             await websocket.send_json(payload)
-            # 전송 주기는 0.05초 (데이터는 큐에 다 보존되므로 상관없음)
             await asyncio.sleep(0.05) 
-            
-    except Exception:
-        pass
+    except Exception: pass
 
 app.include_router(router)
 

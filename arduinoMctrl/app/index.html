@@ -19,7 +19,6 @@
 
         <div class="main-display">
             <div class="gauge-section">
-                
                 <div class="gauge-wrapper">
                     <div class="gauge-body">
                         <div class="gauge-bg"></div>
@@ -27,11 +26,9 @@
                         <div id="needle" class="needle"></div>
                     </div>
                 </div>
-
                 <div class="gauge-text">
                     <span id="duty-val">0</span><span class="unit">%</span>
                 </div>
-
                 <div class="pedal-info">
                     Pedal Input: <span id="pedal-val">0</span>
                </div>
@@ -43,8 +40,15 @@
                     <button id="btn-30sec" class="time-btn" onclick="setTimeMode(30)">30초</button>
                     <button id="btn-1min" class="time-btn active" onclick="setTimeMode(60)">1분</button>
                 </div>
+
+                <div class="chart-label">Pedal Input History</div>
                 <div class="chart-container">
-                    <canvas id="powerChart"></canvas>
+                    <canvas id="pedalChart"></canvas>
+                </div>
+
+                <div class="chart-label" style="margin-top: 15px;">Motor Speed (Duty) History</div>
+                <div class="chart-container">
+                    <canvas id="motorChart"></canvas>
                 </div>
             </div>
         </div>
