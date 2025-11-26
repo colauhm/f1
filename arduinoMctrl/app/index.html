@@ -36,7 +36,14 @@
             </div>
 
             <div class="chart-section">
-                <canvas id="powerChart"></canvas>
+                <div class="chart-controls">
+                    <button id="btn-1min" class="time-btn active" onclick="setTimeMode(1)">1분</button>
+                    <button id="btn-10min" class="time-btn" onclick="setTimeMode(10)">10분</button>
+                </div>
+
+                <div class="chart-container">
+                    <canvas id="powerChart"></canvas>
+                </div>
             </div>
 
         </div>
