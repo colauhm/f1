@@ -66,7 +66,30 @@ const powerChart = new Chart(ctx, {
         plugins: { legend: { display: false } }
     }
 });
+function initChartData() {
+    const now = Date.now();
+    const totalSeconds = MAX_STORE_MINUTES * 60; // 10분 * 60초 = 600개 데이터
 
+    for (let i = totalSeconds; i > 0; i--) {
+        // 과거 시간 계산 (10분 전 ~ 1초 전)
+        const pastTime = now - (i * 1000); 
+        const dateObj = new Date(pastTime);
+        const timeLabel = dateObj.toLocaleTimeString('ko-KR', { hour12: false });
+
+        dataBuffer.push({
+            x: timeLabel,       
+            y: 0,               // 값은 0으로 초기화
+            timestamp: pastTime, 
+            restricted: false   // 초기 상태는 정상(형광색)
+        });
+    }
+    
+    // 초기 데이터로 차트 한 번 그리기
+    updateChartDisplay();
+}
+
+// [실행] 페이지 로드 시 바로 10분치 0 데이터를 채움
+initChartData();
 // [추가] 시간 모드 변경 함수 (버튼 클릭 시 실행)
 window.setTimeMode = function(minutes) {
     viewMinutes = minutes;
