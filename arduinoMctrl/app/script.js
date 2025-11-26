@@ -9,32 +9,29 @@ const pedalText = document.getElementById("pedal-val");
 const warningBox = document.getElementById("warning-dialog");
 const warningText = document.getElementById("warning-text");
 
-// --- 차트 관련 변수 및 설정 ---
+// --- 차트 설정 ---
 const ctx = document.getElementById('powerChart').getContext('2d');
 
-// [핵심] 데이터 관리 변수
-let dataBuffer = [];          // 최대 10분치 데이터를 모두 저장하는 버퍼
-const MAX_STORE_MINUTES = 10; // 최대 저장 시간 (10분)
-let viewMinutes = 1;          // 현재 보고 있는 시간 간격 (기본 1분)
+let dataBuffer = [];
+const MAX_STORE_MINUTES = 10; 
+let viewMinutes = 1; // 기본 1분
 
 const powerChart = new Chart(ctx, {
     type: 'line',
     data: {
-        labels: [],
         datasets: [{
             label: 'Motor Speed',
-            data: [],
-            borderWidth: 2, // 선 두께 살짝 얇게 조정
+            data: [], // 여기에 {x: timestamp, y: value} 형태가 들어감
+            borderWidth: 2,
             fill: true,
             backgroundColor: 'rgba(57, 255, 20, 0.1)',
             tension: 0.4,
             pointRadius: 0,
             
-            // 구간별 색상 변경 (기존 로직 유지)
             segment: {
                 borderColor: ctx => {
                     if (ctx.p1.raw && ctx.p1.raw.restricted) {
-                        return '#ff0000'; // 제한됨: 빨강
+                        return '#ff0000'; // 제한: 빨강
                     }
                     return '#39ff14'; // 정상: 형광
                 }
@@ -47,12 +44,21 @@ const powerChart = new Chart(ctx, {
         animation: false,
         interaction: { intersect: false },
         scales: {
-            x: { 
-                display: true, // X축 시간 표시 (간격 확인용)
+            x: {
+                // [핵심 변경] X축을 선형(Linear) 타입으로 변경하여 시간을 숫자로 처리
+                type: 'linear', 
+                display: true,
+                position: 'bottom',
+                
+                // 시간 형식으로 라벨 표시 (예: 14:30:00)
                 ticks: {
-                    maxTicksLimit: 6, // 라벨이 너무 많이 나오지 않게 제한
                     color: '#666',
-                    font: { size: 10 }
+                    maxTicksLimit: 6,
+                    callback: function(value) {
+                        // timestamp를 시간 문자열로 변환
+                        const date = new Date(value);
+                        return date.toLocaleTimeString('ko-KR', { hour12: false });
+                    }
                 },
                 grid: { display: false }
             },
@@ -66,45 +72,35 @@ const powerChart = new Chart(ctx, {
         plugins: { legend: { display: false } }
     }
 });
+
+// [초기화] 10분치 빈 데이터 채우기 (그래프가 꽉 차서 시작하도록)
 function initChartData() {
     const now = Date.now();
-    const totalSeconds = MAX_STORE_MINUTES * 60; // 10분 * 60초 = 600개 데이터
-
-    for (let i = totalSeconds; i > 0; i--) {
-        // 과거 시간 계산 (10분 전 ~ 1초 전)
-        const pastTime = now - (i * 1000); 
-        const dateObj = new Date(pastTime);
-        const timeLabel = dateObj.toLocaleTimeString('ko-KR', { hour12: false });
-
+    // 0.5초 간격으로 10분치 데이터 생성 (총 1200개)
+    // 간격을 촘촘하게 해서 더 자연스럽게 만듦
+    for (let i = 1200; i > 0; i--) {
+        const pastTime = now - (i * 500); 
         dataBuffer.push({
-            x: timeLabel,       
-            y: 0,               // 값은 0으로 초기화
-            timestamp: pastTime, 
-            restricted: false   // 초기 상태는 정상(형광색)
+            x: pastTime,        // X축: 타임스탬프 (숫자)
+            y: 0,               // Y축: 0
+            restricted: false
         });
     }
-    
-    // 초기 데이터로 차트 한 번 그리기
     updateChartDisplay();
 }
 
-// [실행] 페이지 로드 시 바로 10분치 0 데이터를 채움
-initChartData();
-// [추가] 시간 모드 변경 함수 (버튼 클릭 시 실행)
+// [시간 모드 변경] 0.5 = 30초, 1 = 1분, 10 = 10분
 window.setTimeMode = function(minutes) {
     viewMinutes = minutes;
 
-    // 버튼 스타일 업데이트
-    document.getElementById('btn-1min').classList.remove('active');
-    document.getElementById('btn-10min').classList.remove('active');
+    // 버튼 스타일 초기화 및 설정
+    document.querySelectorAll('.time-btn').forEach(btn => btn.classList.remove('active'));
     
-    if (minutes === 1) {
-        document.getElementById('btn-1min').classList.add('active');
-    } else {
-        document.getElementById('btn-10min').classList.add('active');
-    }
+    if (minutes === 0.5) document.getElementById('btn-30sec').classList.add('active');
+    else if (minutes === 1) document.getElementById('btn-1min').classList.add('active');
+    else if (minutes === 10) document.getElementById('btn-10min').classList.add('active');
 
-    // 모드가 바뀌면 즉시 차트 갱신 (데이터가 쌓여있다면 바로 보임)
+    // 즉시 반영
     updateChartDisplay();
 };
 
@@ -112,30 +108,26 @@ ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
     const isRestricted = !!data.reason; 
 
-    // 1. 게이지 및 텍스트 업데이트
     if (data.duty !== undefined) {
         const duty = parseFloat(data.duty);
-        valText.innerText = duty.toFixed(0);
         
+        // 게이지 업데이트
+        valText.innerText = duty.toFixed(0);
         let angle = (duty * 1.8) - 90;
         if (angle < -90) angle = -90;
         if (angle > 90) angle = 90;
         needle.style.transform = `rotate(${angle}deg)`;
 
-        // 2. 차트 데이터 버퍼에 추가
+        // 차트 데이터 추가
         addDataToBuffer(duty, isRestricted);
     }
 
-    // 3. 페달 값
-    if (data.pedal !== undefined && pedalText) {
-        pedalText.innerText = data.pedal;
-    }
-
-    // 4. 경고창 처리
+    // (페달, 경고창 처리 로직은 기존과 동일하므로 생략 가능, 혹은 그대로 두셔도 됩니다)
+    if (data.pedal !== undefined && pedalText) pedalText.innerText = data.pedal;
     if (data.reason) {
         warningBox.style.display = "block";
-        warningText.innerText = data.reason; 
-        if (data.remaining_time !== undefined && data.remaining_time === 0) {
+        warningText.innerText = data.reason;
+        if (data.remaining_time === 0) {
             warningBox.style.backgroundColor = "rgba(255, 0, 0, 1)";
             warningBox.style.border = "3px solid #ffffff";
         } else {
@@ -147,48 +139,42 @@ ws.onmessage = (event) => {
     }
 };
 
-// [추가] 데이터를 버퍼에 저장하는 함수
 function addDataToBuffer(duty, isRestricted) {
-    const now = new Date(); // 현재 시간 객체
-    const timeLabel = now.toLocaleTimeString('ko-KR', { hour12: false }); // "14:30:05" 형식
-    const timestamp = now.getTime(); // 밀리초 타임스탬프 (계산용)
-
-    // 버퍼에 새 데이터 추가
+    const now = Date.now();
+    
+    // 데이터 추가 (x는 현재 타임스탬프)
     dataBuffer.push({
-        x: timeLabel,       // 차트 라벨용
-        y: duty,            // 값
-        timestamp: timestamp, // 시간 필터링용
-        restricted: isRestricted // 색상용 상태
+        x: now,
+        y: duty,
+        restricted: isRestricted
     });
 
-    // 최대 저장 시간(10분)보다 오래된 데이터는 버퍼에서 삭제
-    // 10분 = 600초 * 1000ms
-    const limitTime = timestamp - (MAX_STORE_MINUTES * 60 * 1000);
-    
-    // 배열 앞부분(오래된 데이터) 제거 로직
-    // 성능을 위해 while로 체크
-    while(dataBuffer.length > 0 && dataBuffer[0].timestamp < limitTime) {
+    // 10분(600,000ms)보다 오래된 데이터 삭제
+    const limitTime = now - (MAX_STORE_MINUTES * 60 * 1000);
+    // 성능 최적화: 앞에서부터 오래된 것만 쳐냄
+    while(dataBuffer.length > 0 && dataBuffer[0].x < limitTime) {
         dataBuffer.shift();
     }
 
-    // 화면 갱신
     updateChartDisplay();
 }
 
-// [추가] 현재 모드에 맞춰 차트에 데이터를 반영하는 함수
 function updateChartDisplay() {
     const now = Date.now();
-    const rangeMs = viewMinutes * 60 * 1000; // 1분 또는 10분을 ms로 변환
-    const cutOffTime = now - rangeMs;
+    const rangeMs = viewMinutes * 60 * 1000; // 보여줄 시간 범위 (ms)
 
-    // 현재 설정된 시간 범위 안에 있는 데이터만 필터링
-    // filter를 사용하면 원본 dataBuffer는 유지되면서 보여줄 것만 뽑음
-    const visibleData = dataBuffer.filter(d => d.timestamp > cutOffTime);
+    // 차트의 X축 범위를 강제로 설정 (이게 핵심!)
+    // 데이터 개수와 상관없이 정확히 'rangeMs' 만큼의 시간을 보여줌
+    powerChart.options.scales.x.min = now - rangeMs;
+    powerChart.options.scales.x.max = now;
 
-    // 차트에 데이터 주입
-    powerChart.data.labels = visibleData.map(d => d.x);
-    powerChart.data.datasets[0].data = visibleData;
+    // 데이터셋 업데이트
+    // 성능을 위해 범위 밖의 너무 먼 데이터는 차트에 넣지 않을 수도 있지만, 
+    // Chart.js가 알아서 잘라주므로 전체를 넘겨도 무방합니다.
+    powerChart.data.datasets[0].data = dataBuffer;
     
-    // 차트 업데이트 ('none' 모드로 성능 최적화)
     powerChart.update('none');
 }
+
+// 실행
+initChartData();
