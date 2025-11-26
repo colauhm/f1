@@ -274,6 +274,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 "remaining_time": current_remaining_time
             }
             await websocket.send_json(payload)
-            await asyncio.sleep(0.05)
+            
+            # [수정] 0.05 -> 0.01로 변경 (초당 20회 -> 초당 100회 전송)
+            # 하드웨어 루프(time.sleep(0.01))와 속도를 맞춰야 중간 데이터를 놓치지 않습니다.
+            await asyncio.sleep(0.01) 
+            
     except Exception:
         pass
