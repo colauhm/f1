@@ -13,8 +13,8 @@ const warningText = document.getElementById("warning-text");
 const ctx = document.getElementById('powerChart').getContext('2d');
 
 let dataBuffer = [];
-const MAX_STORE_MINUTES = 5; // 최대 5분치 데이터 보관 (필요시 늘려도 됨)
-let viewSeconds = 60;        // [변경] 기본 보기 설정을 '1분(60초)'로 설정
+const MAX_STORE_MINUTES = 5; 
+let viewSeconds = 60; 
 
 const powerChart = new Chart(ctx, {
     type: 'line',
@@ -22,13 +22,25 @@ const powerChart = new Chart(ctx, {
         datasets: [{
             label: 'Motor Speed',
             data: [],
-            borderWidth: 2,
+            
+            // [수정 1] 선을 얇게 하여 조밀한 데이터를 잘 보이게 함
+            borderWidth: 1.5, 
+            
             fill: true,
             backgroundColor: 'rgba(57, 255, 20, 0.1)',
-            tension: 0.4,
-            pointRadius: 0,
+            
+            // [수정 2] 핵심! 곡선(0.4)을 끄고 직선(0)으로 설정
+            // 이렇게 해야 순간적으로 튀는 값(노이즈, 스파이크)이 뭉개지지 않고 그대로 보임
+            tension: 0, 
+            
+            pointRadius: 0, // 점은 숨김 (데이터가 많으면 점 때문에 선이 안 보임)
+            
+            // [추가] 선이 끊기지 않고 이어지도록 설정 (데이터 누락 대비)
+            spanGaps: true,
+
             segment: {
                 borderColor: ctx => {
+                    // 제한 상태면 빨강, 아니면 형광
                     if (ctx.p1.raw && ctx.p1.raw.restricted) return '#ff0000';
                     return '#39ff14';
                 }
@@ -38,8 +50,16 @@ const powerChart = new Chart(ctx, {
     options: {
         responsive: true,
         maintainAspectRatio: false,
-        animation: false,
+        animation: false, // 성능 최적화: 애니메이션 끔
         interaction: { intersect: false },
+        
+        // [추가] 성능 최적화 옵션 (데이터가 많을 때 버벅임 방지)
+        elements: {
+            line: {
+                borderJoinStyle: 'round'
+            }
+        },
+        
         scales: {
             x: {
                 type: 'linear', 
@@ -54,18 +74,26 @@ const powerChart = new Chart(ctx, {
                 },
                 grid: { display: false }
             },
-            y: { min: 0, max: 100, grid: { color: '#333' }, ticks: { color: '#888' } }
+            y: { 
+                min: 0, 
+                max: 100, 
+                grid: { color: '#333' }, 
+                ticks: { color: '#888' } 
+            }
         },
         plugins: { legend: { display: false } }
     }
 });
 
-// [초기화] 5분치 0 데이터 채우기
+// [수정 3] 초기화 데이터도 더 촘촘하게 (0.05초 간격)
 function initChartData() {
     const now = Date.now();
-    // 0.2초 간격으로 5분치 채움 (부드러운 스크롤 위해 촘촘하게)
-    for (let i = 1500; i > 0; i--) {
-        const pastTime = now - (i * 200); 
+    // 5분치 데이터를 아주 촘촘하게(50ms 간격) 채워서 시작
+    // 데이터가 조밀해도 차트가 버티는지 확인 가능
+    const totalPoints = (MAX_STORE_MINUTES * 60 * 1000) / 50; // 약 6000개 포인트
+    
+    for (let i = totalPoints; i > 0; i--) {
+        const pastTime = now - (i * 50); 
         dataBuffer.push({
             x: pastTime,
             y: 0,
