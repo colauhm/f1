@@ -12,252 +12,158 @@ body {
 
 .dashboard-container {
     text-align: center;
-    width: 90%; /* 화면 넓게 쓰기 */
-    max-width: 1200px;
+    width: 95%;
+    max-width: 1400px;
 }
 
 h1 {
     font-weight: 200;
     letter-spacing: 2px;
-    margin-bottom: 40px;
+    margin-bottom: 30px;
     color: #00d2ff;
     text-shadow: 0 0 10px rgba(0, 210, 255, 0.5);
 }
 
-/* [추가] 게이지와 차트를 가로로 배치하는 컨테이너 */
 .main-display {
     display: flex;
     flex-direction: row;
     justify-content: center;
     align-items: center;
-    gap: 50px; /* 게이지와 차트 사이 간격 */
-    flex-wrap: wrap; /* 화면 작으면 줄바꿈 */
+    gap: 40px;
+    flex-wrap: wrap;
 }
 
-/* [추가] 차트 영역 스타일 */
-.chart-section {
-    width: 500px;  /* 그래프 너비 */
-    height: 300px; /* 그래프 높이 */
-    background: rgba(255, 255, 255, 0.05); /* 배경 살짝 밝게 */
-    border-radius: 15px;
-    padding: 15px;
-    box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
-    border: 1px solid #333;
-}
-
-/* 기존 게이지 스타일 유지... */
-.gauge-wrapper {
-    position: relative;
-    width: 300px;
-    height: auto;
-    margin: 0 auto;
+/* 게이지 섹션 */
+.gauge-section {
     display: flex;
     flex-direction: column;
     align-items: center;
 }
 
-/* --- 게이지 스타일 --- */
 .gauge-wrapper {
     position: relative;
     width: 300px;
-    height: auto; /* 기존 160px -> auto (숫자가 내려갈 공간 확보) */
-    margin: 0 auto;
-    display: flex;
-    flex-direction: column; /* 세로 정렬 */
-    align-items: center;
+    height: 160px; /* 반원 높이 */
+    overflow: hidden;
+    margin-bottom: 10px;
 }
 
 .gauge-body {
     width: 300px;
     height: 150px;
     position: relative;
-    overflow: hidden; /* 아래쪽 절반을 숨겨서 반원으로 만듦 */
 }
 
-/* 무지개색 아치 */
 .gauge-bg {
     width: 300px;
-    height: 300px; /* 원형 */
+    height: 300px;
     border-radius: 50%;
-    background: conic-gradient(
-        from 180deg, 
-        #00ff00 0deg,   /* 초록 (저속) */
-        #ffff00 90deg,  /* 노랑 (중속) */
-        #ff0000 180deg  /* 빨강 (고속) */
-    );
+    background: conic-gradient(from 180deg, #00ff00 0deg, #ffff00 90deg, #ff0000 180deg);
     position: absolute;
-    top: 0;
-    left: 0;
+    top: 0; left: 0;
 }
 
-/* 가운데 검은색 커버 (도넛 모양) */
 .gauge-cover {
     width: 240px;
     height: 240px;
     background-color: #111;
     border-radius: 50%;
     position: absolute;
-    top: 30px;
-    left: 30px;
-    box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
+    top: 30px; left: 30px;
 }
 
-/* 바늘 */
 .needle {
     width: 4px;
     height: 130px;
     background: #fff;
     position: absolute;
-    bottom: 0;      /* 바닥 기준 */
-    left: 148px;    /* 중앙 정렬 (300/2 - 바늘두께/2) */
-    transform-origin: bottom center; /* 회전 중심을 바늘 꼬리로 설정 */
-    transform: rotate(-90deg); /* 초기 상태: 왼쪽 끝(-90도) */
-    transition: transform 0.1s cubic-bezier(0.1, 0.5, 0.3, 1.5); /* 탄력 있는 움직임 */
+    bottom: 0; left: 148px;
+    transform-origin: bottom center;
+    transform: rotate(-90deg);
     border-radius: 50% 50% 0 0;
-    box-shadow: 0 0 5px white;
     z-index: 10;
+    transition: transform 0.1s linear; /* 게이지 바늘 부드럽게 */
 }
 
-/* 바늘 꼬리 덮개 (중앙 원) */
-.needle::after {
-    content: '';
-    position: absolute;
-    bottom: -10px;
-    left: -8px;
-    width: 20px;
-    height: 20px;
-    background: #fff;
-    border-radius: 50%;
-    box-shadow: 0 0 10px rgba(255,255,255,0.8);
-}
-
-/* 숫자 표시 */
-/* 3. 숫자를 게이지 아래로 내립니다 */
 .gauge-text {
-    margin-top: 10px; /* 기존 -40px -> 10px (겹침 해결) */
+    margin-top: -30px;
     position: relative;
     z-index: 20;
 }
 
-#duty-val {
-    font-size: 3.5rem;
-    font-weight: bold;
-    color: #fff;
-}
+#duty-val { font-size: 3.5rem; font-weight: bold; color: #fff; }
+.unit { font-size: 1.5rem; color: #888; }
+.pedal-info { font-size: 1.2rem; color: #aaa; margin-top: 10px; }
 
-.unit {
-    font-size: 1.5rem;
-    color: #888;
-}
-
-.status-msg {
-    margin-top: 30px;
-    color: #666;
-    font-size: 0.9rem;
-}
-/* ... 기존 스타일 유지 ... */
-
-/* [추가] 경고 박스 스타일 */
-.warning-box {
-    position: fixed;
-    top: 20%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background-color: rgba(255, 0, 0, 0.9); /* 반투명 빨강 */
-    color: white;
-    padding: 20px 40px;
-    border-radius: 10px;
-    text-align: center;
-    z-index: 1000; /* 제일 위에 뜨도록 */
-    box-shadow: 0 0 20px rgba(255, 0, 0, 0.8);
-    border: 3px solid #ff5555;
-    
-    /* 깜빡이는 애니메이션 적용 */
-    animation: blink-warning 0.5s infinite alternate;
-}
-
-.warning-icon {
-    font-size: 1.5rem;
-    font-weight: bold;
-    margin-bottom: 10px;
-    text-transform: uppercase;
-    color: #ffff00; /* 노란색 텍스트 */
-}
-
-.warning-msg {
-    font-size: 1.2rem;
-    font-weight: 500;
-    
-    /* [수정됨] 줄바꿈(\n)을 인식하도록 설정 */
-    white-space: pre-line; 
-    line-height: 1.5; /* 줄 간격 확보 */
-}
-
-/* 깜빡임 키프레임 정의 */
-@keyframes blink-warning {
-    from {
-        opacity: 1;
-        transform: translate(-50%, -50%) scale(1);
-    }
-    to {
-        opacity: 0.7;
-        transform: translate(-50%, -50%) scale(1.05); /* 살짝 커짐 */
-    }
-}
-/* style.css */
-
-/* ... 기존 스타일 유지 ... */
-
+/* 차트 섹션 */
 .chart-section {
-    width: 500px;
-    height: 350px; /* 버튼 공간 확보를 위해 높이 약간 증가 */
+    width: 600px;
+    height: 350px;
     background: rgba(255, 255, 255, 0.05);
     border-radius: 15px;
     padding: 15px;
-    box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
     border: 1px solid #333;
-    display: flex;       /* 내부 요소 정렬 */
+    display: flex;
     flex-direction: column;
 }
 
-/* [추가] 차트 컨트롤 버튼 영역 */
 .chart-controls {
     display: flex;
-    justify-content: flex-end; /* 오른쪽 정렬 */
-    gap: 10px;
+    justify-content: flex-end;
+    gap: 8px;
     margin-bottom: 10px;
 }
 
-/* [추가] 시간 선택 버튼 스타일 */
 .time-btn {
     background: #222;
     border: 1px solid #444;
     color: #888;
     padding: 5px 12px;
-    border-radius: 5px;
+    border-radius: 4px;
     cursor: pointer;
     font-size: 0.8rem;
-    transition: all 0.3s ease;
+    transition: all 0.2s;
 }
 
-.time-btn:hover {
-    background: #333;
-    color: #fff;
-}
+.time-btn:hover { background: #333; color: #fff; }
 
-/* 활성화된 버튼 (형광색 강조) */
 .time-btn.active {
     background: rgba(57, 255, 20, 0.2);
-    border: 1px solid #39ff14;
+    border-color: #39ff14;
     color: #39ff14;
-    box-shadow: 0 0 5px rgba(57, 255, 20, 0.5);
     font-weight: bold;
 }
 
-/* 캔버스가 꽉 차도록 설정 */
 .chart-container {
     flex-grow: 1;
     position: relative;
     width: 100%;
-    height: 0; /* flex box 안에서 높이 자동 조절용 트릭 */
+    height: 0;
+}
+
+/* 경고창 */
+.warning-box {
+    position: fixed;
+    top: 20%; left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: rgba(255, 0, 0, 0.9);
+    color: white;
+    padding: 20px 40px;
+    border-radius: 10px;
+    text-align: center;
+    z-index: 1000;
+    box-shadow: 0 0 20px rgba(255, 0, 0, 0.8);
+    border: 3px solid #ff5555;
+    animation: blink-warning 0.5s infinite alternate;
+}
+
+.warning-icon {
+    font-size: 1.5rem; font-weight: bold; color: #ffff00; margin-bottom: 10px;
+}
+
+.warning-msg { font-size: 1.2rem; white-space: pre-line; line-height: 1.4; }
+
+@keyframes blink-warning {
+    from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    to { opacity: 0.8; transform: translate(-50%, -50%) scale(1.05); }
 }

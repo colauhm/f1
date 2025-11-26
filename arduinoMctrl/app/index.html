@@ -15,10 +15,9 @@
             <div id="warning-text" class="warning-msg">안전 제한 작동 중</div>
         </div>
 
-        <h1>MOTOR POWER</h1>
+        <h1>MOTOR POWER MONITOR</h1>
 
         <div class="main-display">
-            
             <div class="gauge-section">
                 <div class="gauge-wrapper">
                     <div class="gauge-body">
@@ -37,18 +36,14 @@
 
             <div class="chart-section">
                 <div class="chart-controls">
-                    <div class="chart-controls">
-                        <button id="btn-10sec" class="time-btn" onclick="setTimeMode(10)">10초</button>
-                        <button id="btn-30sec" class="time-btn" onclick="setTimeMode(30)">30초</button>
-                        <button id="btn-1min" class="time-btn active" onclick="setTimeMode(60)">1분</button>
-                    </div>
+                    <button id="btn-10sec" class="time-btn" onclick="setTimeMode(10)">10초</button>
+                    <button id="btn-30sec" class="time-btn" onclick="setTimeMode(30)">30초</button>
+                    <button id="btn-1min" class="time-btn active" onclick="setTimeMode(60)">1분</button>
                 </div>
-
                 <div class="chart-container">
                     <canvas id="powerChart"></canvas>
                 </div>
             </div>
-
         </div>
     </div>
 
