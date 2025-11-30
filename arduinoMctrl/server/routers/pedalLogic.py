@@ -50,7 +50,7 @@ SAFETY_LOCK_DURATION = 5.0
 SAFETY_SPEED = 15
 IDLE_SPEED = 15
 IDLE_TIMEOUT = 5.0
-AUDIO_CARD_ID = 3 
+AUDIO_CARD_ID = 0 
 
 # ---- 전역 변수 ----
 current_duty = 0.0
