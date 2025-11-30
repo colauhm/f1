@@ -1,0 +1,13 @@
+RPi.GPIO
+lgpio
+pigpio
+spidev
+smbus2
+pyserial
+fastapi
+uvicorn
+websockets
+numpy
+pandas
+opencv-python-headless
+requestss
