@@ -1,6 +1,8 @@
-const wsUrl = "ws://" + window.location.host + "/ws";
-const ws = new WebSocket(wsUrl);
+// 현재 페이지가 https라면 wss를, 아니면 ws를 쓰도록 자동 설정
+var protocol = (location.protocol === 'https:') ? 'wss://' : 'ws://';
+var wsAddress = protocol + location.host + "/ws";
 
+const ws = new WebSocket(wsAddress);
 const needle = document.getElementById("needle");
 const valText = document.getElementById("duty-val");
 const warningBox = document.getElementById("warning-dialog");
