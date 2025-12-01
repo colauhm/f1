@@ -10,8 +10,6 @@ import os
 import numpy as np
 import sounddevice as sd
 
-# ... (하드웨어 임포트 및 설정 부분은 기존과 동일) ...
-
 # ---- 1. 하드웨어 설정 ----
 try:
     import RPi.GPIO as GPIO
@@ -46,8 +44,8 @@ SERIAL_PORT = '/dev/ttyUSB0'; BAUD_RATE = 115200
 # ---- 3. 임계값 설정 ----
 PEDAL_TOTAL_ANGLE = 45.0
 CRITICAL_ANGULAR_VELOCITY = 420
-RAPID_PRESS_COUNT = 3      # 2초 내 3회 이상이면 위험
-RAPID_PRESS_WINDOW = 2.0   # 2초
+RAPID_PRESS_COUNT = 3      
+RAPID_PRESS_WINDOW = 2.0   
 SAFETY_LOCK_DURATION = 5.0
 SAFETY_SPEED = 15
 IDLE_SPEED = 15
@@ -79,12 +77,17 @@ def play_siren_thread():
     def _run_siren():
         try:
             sd.default.device = AUDIO_CARD_ID
-            os.system(f"amixer -c {AUDIO_CARD_ID} set PCM 20% > /dev/null 2>&1")
-            sample_rate = 48000; beep_freq = 500; beep_duration = 0.5; silence_duration = 0.5; repeats = 3
+            # 볼륨 조절 (필요시)
+            os.system(f"amixer -c {AUDIO_CARD_ID} set PCM 40% > /dev/null 2>&1")
+            
+            sample_rate = 48000; beep_freq = 600
+            beep_duration = 0.3; silence_duration = 0.2; repeats = 4 # [수정] 조금 더 긴박하게
+            
             t_beep = np.linspace(0, beep_duration, int(sample_rate * beep_duration), endpoint=False)
             beep_wave = np.sign(np.sin(2 * np.pi * beep_freq * t_beep)).astype(np.float32)
             silence_wave = np.zeros(int(sample_rate * silence_duration), dtype=np.float32)
             full_wave = np.concatenate([beep_wave, silence_wave] * repeats)
+            
             sd.play(full_wave * 0.5, sample_rate, blocking=True)
             os.system(f"amixer -c {AUDIO_CARD_ID} set PCM 70% > /dev/null 2>&1")
         except: pass
@@ -124,13 +127,15 @@ def hardware_loop():
     GPIO.output(IN1_PIN, True); GPIO.output(IN2_PIN, False)
     GPIO.output(IN3_PIN, True); GPIO.output(IN4_PIN, False)
     
-    # [핵심] 급가속(90% 이상 밟음) 타임스탬프 저장용 큐
     press_timestamps = deque()
     
     override_end_time = 0; last_pedal_value = 0; last_time = time.time()
     prev_over_90 = False; last_pedal_active_time = time.time()
     safety_lock_active = False; safety_cause_msg = ""
     
+    # [중요] 이전 루프의 위험 상태 기억용 변수
+    prev_front_danger = False
+
     ser = None
     if PLATFORM == "LINUX":
         try: ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1); ser.flush()
@@ -164,12 +169,29 @@ def hardware_loop():
                 trigger_safety = False
                 detected_reason = ""
                 
-                # 전방 주의
+                # --- [수정된 전방 장애물 로직] ---
                 front_danger = False
+                
+                # 조건: 거리가 1m 이하이고 페달을 밟고 있을 때
                 if final_dist > 0 and final_dist <= COLLISION_DIST_LIMIT and current_pedal_value > 0:
-                    front_danger = True; detected_reason = "⚠️ 전방을 주의하세요!"
+                    front_danger = True
+                    detected_reason = "⚠️ 전방을 주의하세요!"
+                    
+                    # [소리] 위험이 처음 감지된 순간에 소리 재생
+                    if not prev_front_danger:
+                        play_siren_thread()
 
-                if not front_danger:
+                if front_danger:
+                    # 위험 상황: 즉시 정지 및 경고
+                    current_safety_reason = detected_reason
+                    current_remaining_time = 0
+                    target_speed = 0
+                else:
+                    # [해제] 위험 상황이 끝났을 때 경고 메시지 즉시 제거
+                    if prev_front_danger:
+                        current_safety_reason = None
+                    
+                    # --- 기존 안전 로직 (급발진/과속) ---
                     if safety_lock_active:
                         remaining = override_end_time - current_time
                         current_remaining_time = max(0, int(remaining))
@@ -194,11 +216,9 @@ def hardware_loop():
                             if abs(angular_velocity) >= CRITICAL_ANGULAR_VELOCITY:
                                 trigger_safety = True; detected_reason = "⚠️ 급발진 감지!"
                             
-                            # [핵심] 2초 이내 급가속 횟수 계산 로직
                             is_over_90 = (current_pedal_value >= 90)
                             if is_over_90 and not prev_over_90: press_timestamps.append(current_time)
                             
-                            # 2초 지난 기록 삭제
                             while press_timestamps and press_timestamps[0] < current_time - RAPID_PRESS_WINDOW:
                                 press_timestamps.popleft()
                                 
@@ -218,15 +238,15 @@ def hardware_loop():
                             else:
                                 if (current_time - last_pedal_active_time) >= IDLE_TIMEOUT: target_speed = 0
                                 else: target_speed = IDLE_SPEED
-                else:
-                    current_safety_reason = detected_reason; current_remaining_time = 0; target_speed = 0
+                
+                # 상태 업데이트
+                prev_front_danger = front_danger
 
                 pwm_a.ChangeDutyCycle(target_speed)
                 pwm_b.ChangeDutyCycle(target_speed)
                 current_duty = target_speed
                 last_pedal_value = current_pedal_value; last_time = current_time
                 
-                # [수정] 'h' 대신 'pc'(pedal_count) 전송 (현재 2초 윈도우 내 카운트)
                 data_queue.put({
                     "t": current_time * 1000,
                     "p": current_pedal_value,
@@ -234,7 +254,7 @@ def hardware_loop():
                     "v": current_angular_velocity,
                     "dist": round(final_dist, 1),
                     "r": 1 if (safety_lock_active or front_danger) else 0,
-                    "pc": len(press_timestamps) # [New] 2초내 급가속 횟수
+                    "pc": len(press_timestamps)
                 })
             time.sleep(0.01)
     except Exception as e: print(e)
