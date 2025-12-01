@@ -7,14 +7,17 @@ const pedalText = document.getElementById("pedal-val");
 const warningBox = document.getElementById("warning-dialog");
 const warningText = document.getElementById("warning-text");
 
-// 버퍼 2개 생성
+// 버퍼 4개 생성
 let pedalBuffer = [];
 let motorBuffer = [];
+let velocityBuffer = []; // [New]
+let distanceBuffer = []; // [New]
+
 const MAX_STORE_MINUTES = 5; 
 let viewSeconds = 60; 
 
 // 공통 차트 옵션 생성 함수
-function createChartConfig(buffer, label) {
+function createChartConfig(buffer, label, color = '#39ff14') {
     return {
         type: 'line',
         data: {
@@ -23,7 +26,8 @@ function createChartConfig(buffer, label) {
                 data: buffer,
                 borderWidth: 1.5,
                 fill: true,
-                backgroundColor: 'rgba(57, 255, 20, 0.1)',
+                backgroundColor: color.startsWith('#') ? color + '1A' : color, // 투명도 추가
+                borderColor: color,
                 tension: 0, 
                 pointRadius: 0, 
                 spanGaps: true,
@@ -31,7 +35,7 @@ function createChartConfig(buffer, label) {
                 segment: {
                     borderColor: ctx => {
                         if (ctx.p1.raw && ctx.p1.raw.restricted) return '#ff0000';
-                        return '#39ff14';
+                        return color;
                     }
                 }
             }]
@@ -55,7 +59,7 @@ function createChartConfig(buffer, label) {
                     grid: { display: false }
                 },
                 y: { 
-                    min: 0, max: 100, 
+                    // Y축 범위 자동 조절을 위해 min/max 제거 권장하나, 페달/모터는 고정
                     grid: { color: '#333' }, 
                     ticks: { color: '#888' } 
                 }
@@ -69,24 +73,48 @@ function createChartConfig(buffer, label) {
     };
 }
 
-// 차트 2개 생성
+// ---- 차트 생성 ----
+
+// 1. Pedal (초록)
 const ctxPedal = document.getElementById('pedalChart').getContext('2d');
-const pedalChart = new Chart(ctxPedal, createChartConfig(pedalBuffer, 'Pedal'));
+const configPedal = createChartConfig(pedalBuffer, 'Pedal', '#39ff14');
+configPedal.options.scales.y.min = 0;
+configPedal.options.scales.y.max = 100;
+const pedalChart = new Chart(ctxPedal, configPedal);
 
+// 2. Motor (초록)
 const ctxMotor = document.getElementById('motorChart').getContext('2d');
-const motorChart = new Chart(ctxMotor, createChartConfig(motorBuffer, 'Motor'));
+const configMotor = createChartConfig(motorBuffer, 'Motor', '#39ff14');
+configMotor.options.scales.y.min = 0;
+configMotor.options.scales.y.max = 100;
+const motorChart = new Chart(ctxMotor, configMotor);
 
-// 초기 데이터 채우기 (두 버퍼 모두)
+// 3. Velocity (노랑)
+const ctxVelocity = document.getElementById('velocityChart').getContext('2d');
+const configVelocity = createChartConfig(velocityBuffer, 'Velocity', '#ffff00');
+// 각속도는 음수가 나올 수도 있고 범위가 크므로 min/max 자동
+const velocityChart = new Chart(ctxVelocity, configVelocity);
+
+// 4. Distance (파랑)
+const ctxDistance = document.getElementById('distanceChart').getContext('2d');
+const configDistance = createChartConfig(distanceBuffer, 'Distance', '#00d2ff');
+configDistance.options.scales.y.min = 0; // 거리는 0부터
+const distanceChart = new Chart(ctxDistance, configDistance);
+
+
+// 초기 데이터 채우기
 function initChartData() {
     const now = Date.now();
     for (let i = 2000; i > 0; i--) {
         const pt = { x: now - (i * 50), y: 0, restricted: false };
         pedalBuffer.push(pt);
         motorBuffer.push(pt);
+        velocityBuffer.push(pt);
+        distanceBuffer.push(pt);
     }
 }
 
-// 시간 모드 변경 (버튼 하나로 두 차트 제어)
+// 시간 모드 변경 (버튼 하나로 모든 차트 제어)
 window.setTimeMode = function(seconds) {
     viewSeconds = seconds;
     document.querySelectorAll('.time-btn').forEach(btn => btn.classList.remove('active'));
@@ -95,7 +123,6 @@ window.setTimeMode = function(seconds) {
     else if (seconds === 30) document.getElementById('btn-30sec').classList.add('active');
     else if (seconds === 60) document.getElementById('btn-1min').classList.add('active');
     
-    // 즉시 갱신
     requestAnimationFrame(updateChartScale);
 };
 
@@ -129,48 +156,43 @@ ws.onmessage = (event) => {
             warningBox.style.display = "none";
         }
 
-        // 3. [핵심] 배치 데이터 분리하여 각각 저장
+        // 3. 데이터 분리 저장
         if (history && history.length > 0) {
             history.forEach(pt => {
                 const isRestricted = (pt.r === 1);
                 
-                // 페달 버퍼 (pt.p)
-                pedalBuffer.push({
-                    x: pt.t,
-                    y: pt.p,
-                    restricted: isRestricted
-                });
-
-                // 모터 버퍼 (pt.d)
-                motorBuffer.push({
-                    x: pt.t,
-                    y: pt.d,
-                    restricted: isRestricted
-                });
+                // 페달
+                pedalBuffer.push({ x: pt.t, y: pt.p, restricted: isRestricted });
+                // 모터
+                motorBuffer.push({ x: pt.t, y: pt.d, restricted: isRestricted });
+                // [New] 각속도
+                velocityBuffer.push({ x: pt.t, y: pt.v, restricted: isRestricted });
+                // [New] 거리
+                distanceBuffer.push({ x: pt.t, y: pt.dist, restricted: isRestricted });
             });
         }
     }
 };
 
-// 렌더링 루프 (두 차트 모두 갱신)
+// 렌더링 루프
 function startRenderLoop() {
     function render() {
         const now = Date.now();
         const limitTime = now - (MAX_STORE_MINUTES * 60 * 1000);
-        let removeCount = 0;
-
-        // 오래된 데이터 정리 (페달)
-        while(pedalBuffer.length > 0 && pedalBuffer[0].x < limitTime && removeCount < 50) {
-            pedalBuffer.shift();
-            removeCount++;
-        }
         
-        // 오래된 데이터 정리 (모터) - 개수가 거의 같겠지만 따로 관리
-        removeCount = 0;
-        while(motorBuffer.length > 0 && motorBuffer[0].x < limitTime && removeCount < 50) {
-            motorBuffer.shift();
-            removeCount++;
+        // 데이터 정리 함수
+        function cleanBuffer(buffer) {
+            let removeCount = 0;
+            while(buffer.length > 0 && buffer[0].x < limitTime && removeCount < 50) {
+                buffer.shift();
+                removeCount++;
+            }
         }
+
+        cleanBuffer(pedalBuffer);
+        cleanBuffer(motorBuffer);
+        cleanBuffer(velocityBuffer);
+        cleanBuffer(distanceBuffer);
 
         updateChartScale(); 
         requestAnimationFrame(render);
@@ -182,15 +204,13 @@ function updateChartScale() {
     const now = Date.now();
     const minTime = now - (viewSeconds * 1000);
 
-    // 페달 차트 갱신
-    pedalChart.options.scales.x.min = minTime;
-    pedalChart.options.scales.x.max = now;
-    pedalChart.update('none');
-
-    // 모터 차트 갱신
-    motorChart.options.scales.x.min = minTime;
-    motorChart.options.scales.x.max = now;
-    motorChart.update('none');
+    const charts = [pedalChart, motorChart, velocityChart, distanceChart];
+    
+    charts.forEach(chart => {
+        chart.options.scales.x.min = minTime;
+        chart.options.scales.x.max = now;
+        chart.update('none');
+    });
 }
 
 // 시작
