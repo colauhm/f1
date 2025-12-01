@@ -34,9 +34,53 @@ h1 { font-weight: 200; margin-bottom: 30px; color: #00d2ff; text-shadow: 0 0 10p
 .chart-header { display: flex; justify-content: space-between; margin-bottom: 15px; }
 .chart-title { font-size: 1.2rem; color: #ddd; }
 .chart-controls { display: flex; gap: 8px; }
-.time-btn { background: #222; border: 1px solid #444; color: #888; padding: 5px 12px; border-radius: 4px; cursor: pointer; }
-.time-btn.active { background: rgba(57, 255, 20, 0.2); border-color: #39ff14; color: #39ff14; }
+/* ---- 시간 선택 버튼 (Glow Effect 적용) ---- */
+.time-btn {
+    background: #222;
+    border: 1px solid #444;
+    color: #888;
+    padding: 6px 14px; /* 클릭하기 편하게 조금 키움 */
+    border-radius: 6px; /* 모서리를 조금 더 둥글게 */
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); /* 부드러운 전환 */
+    letter-spacing: 0.5px;
+    
+    /* 기본 상태에서도 미세한 그림자 */
+    box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+}
 
+/* [Hover] 마우스 올렸을 때: 은은한 흰색/푸른빛 */
+.time-btn:hover {
+    background: #333;
+    color: #fff;
+    border-color: #777;
+    
+    /* 은은하게 퍼지는 빛 */
+    box-shadow: 0 0 12px rgba(255, 255, 255, 0.15), 
+                0 0 4px rgba(255, 255, 255, 0.3);
+    
+    /* 텍스트도 살짝 빛나게 */
+    text-shadow: 0 0 5px rgba(255, 255, 255, 0.6);
+    
+    transform: translateY(-2px); /* 살짝 떠오르는 느낌 */
+}
+
+/* [Active] 선택된 상태: 강렬한 녹색 네온 */
+.time-btn.active {
+    background: rgba(57, 255, 20, 0.1); /* 배경은 투명하게 */
+    border-color: #39ff14;
+    color: #39ff14;
+    
+    /* 녹색 네온 글로우 */
+    box-shadow: 0 0 15px rgba(57, 255, 20, 0.3), 
+                inset 0 0 10px rgba(57, 255, 20, 0.1);
+                
+    text-shadow: 0 0 8px rgba(57, 255, 20, 0.8);
+    
+    transform: translateY(0); /* 눌린 느낌 */
+}
 /* 차트 그리드 */
 .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; position: relative; }
 
