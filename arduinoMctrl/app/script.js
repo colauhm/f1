@@ -7,16 +7,20 @@ const pedalText = document.getElementById("pedal-val");
 const warningBox = document.getElementById("warning-dialog");
 const warningText = document.getElementById("warning-text");
 
-// 버퍼 4개 생성
+// [추가] 거리 확인용 엘리먼트
+const distValText = document.getElementById("dist-val");
+const distStatusText = document.getElementById("dist-status");
+
+// 버퍼 4개
 let pedalBuffer = [];
 let motorBuffer = [];
-let velocityBuffer = []; // [New]
-let distanceBuffer = []; // [New]
+let velocityBuffer = [];
+let distanceBuffer = [];
 
 const MAX_STORE_MINUTES = 5; 
 let viewSeconds = 60; 
 
-// 공통 차트 옵션 생성 함수
+// 차트 옵션 생성
 function createChartConfig(buffer, label, color = '#39ff14') {
     return {
         type: 'line',
@@ -26,7 +30,7 @@ function createChartConfig(buffer, label, color = '#39ff14') {
                 data: buffer,
                 borderWidth: 1.5,
                 fill: true,
-                backgroundColor: color.startsWith('#') ? color + '1A' : color, // 투명도 추가
+                backgroundColor: color.startsWith('#') ? color + '1A' : color, 
                 borderColor: color,
                 tension: 0, 
                 pointRadius: 0, 
@@ -53,56 +57,47 @@ function createChartConfig(buffer, label, color = '#39ff14') {
                     position: 'bottom',
                     ticks: {
                         color: '#666',
-                        maxTicksLimit: 6,
+                        maxTicksLimit: 5, // 2x2로 작아졌으니 틱 개수 감소
                         callback: val => new Date(val).toLocaleTimeString('ko-KR', { hour12: false })
                     },
                     grid: { display: false }
                 },
                 y: { 
-                    // Y축 범위 자동 조절을 위해 min/max 제거 권장하나, 페달/모터는 고정
                     grid: { color: '#333' }, 
                     ticks: { color: '#888' } 
                 }
             },
             plugins: { 
                 legend: { display: false },
-                tooltip: { enabled: false },
-                decimation: { enabled: false }
+                tooltip: { enabled: false }
             }
         }
     };
 }
 
 // ---- 차트 생성 ----
-
-// 1. Pedal (초록)
 const ctxPedal = document.getElementById('pedalChart').getContext('2d');
 const configPedal = createChartConfig(pedalBuffer, 'Pedal', '#39ff14');
 configPedal.options.scales.y.min = 0;
 configPedal.options.scales.y.max = 100;
 const pedalChart = new Chart(ctxPedal, configPedal);
 
-// 2. Motor (초록)
 const ctxMotor = document.getElementById('motorChart').getContext('2d');
 const configMotor = createChartConfig(motorBuffer, 'Motor', '#39ff14');
 configMotor.options.scales.y.min = 0;
 configMotor.options.scales.y.max = 100;
 const motorChart = new Chart(ctxMotor, configMotor);
 
-// 3. Velocity (노랑)
 const ctxVelocity = document.getElementById('velocityChart').getContext('2d');
 const configVelocity = createChartConfig(velocityBuffer, 'Velocity', '#ffff00');
-// 각속도는 음수가 나올 수도 있고 범위가 크므로 min/max 자동
 const velocityChart = new Chart(ctxVelocity, configVelocity);
 
-// 4. Distance (파랑)
 const ctxDistance = document.getElementById('distanceChart').getContext('2d');
 const configDistance = createChartConfig(distanceBuffer, 'Distance', '#00d2ff');
-configDistance.options.scales.y.min = 0; // 거리는 0부터
+configDistance.options.scales.y.min = 0;
 const distanceChart = new Chart(ctxDistance, configDistance);
 
-
-// 초기 데이터 채우기
+// 초기 데이터
 function initChartData() {
     const now = Date.now();
     for (let i = 2000; i > 0; i--) {
@@ -114,7 +109,7 @@ function initChartData() {
     }
 }
 
-// 시간 모드 변경 (버튼 하나로 모든 차트 제어)
+// 시간 모드 변경
 window.setTimeMode = function(seconds) {
     viewSeconds = seconds;
     document.querySelectorAll('.time-btn').forEach(btn => btn.classList.remove('active'));
@@ -156,20 +151,34 @@ ws.onmessage = (event) => {
             warningBox.style.display = "none";
         }
 
-        // 3. 데이터 분리 저장
+        // 3. 버퍼 저장
+        let lastDist = 0;
         if (history && history.length > 0) {
             history.forEach(pt => {
                 const isRestricted = (pt.r === 1);
-                
-                // 페달
                 pedalBuffer.push({ x: pt.t, y: pt.p, restricted: isRestricted });
-                // 모터
                 motorBuffer.push({ x: pt.t, y: pt.d, restricted: isRestricted });
-                // [New] 각속도
                 velocityBuffer.push({ x: pt.t, y: pt.v, restricted: isRestricted });
-                // [New] 거리
                 distanceBuffer.push({ x: pt.t, y: pt.dist, restricted: isRestricted });
+                
+                if(pt.dist !== undefined) lastDist = pt.dist;
             });
+        }
+        
+        // 4. [추가] 거리 센서 값 UI 업데이트
+        // 마지막 데이터 포인트의 거리를 표시
+        if (distValText) {
+            distValText.innerText = lastDist.toFixed(1);
+            if (lastDist > 0 && lastDist < 300) {
+                distStatusText.innerText = "● Operating Normally";
+                distStatusText.style.color = "#00ff00";
+            } else if (lastDist >= 300) {
+                 distStatusText.innerText = "● Out of Range";
+                 distStatusText.style.color = "#ffff00";
+            } else {
+                distStatusText.innerText = "○ No Signal";
+                distStatusText.style.color = "#666";
+            }
         }
     }
 };
@@ -180,7 +189,6 @@ function startRenderLoop() {
         const now = Date.now();
         const limitTime = now - (MAX_STORE_MINUTES * 60 * 1000);
         
-        // 데이터 정리 함수
         function cleanBuffer(buffer) {
             let removeCount = 0;
             while(buffer.length > 0 && buffer[0].x < limitTime && removeCount < 50) {
@@ -213,6 +221,5 @@ function updateChartScale() {
     });
 }
 
-// 시작
 initChartData();
 startRenderLoop();

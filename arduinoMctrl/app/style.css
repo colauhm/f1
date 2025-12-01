@@ -7,14 +7,13 @@ body {
     align-items: center;
     min-height: 100vh;
     margin: 0;
-    /* overflow hidden을 제거하여 내용이 많아지면 스크롤 가능하게 함 */
-    overflow-y: auto; 
+    overflow-y: auto;
 }
 
 .dashboard-container {
     text-align: center;
     width: 95%;
-    max-width: 1400px;
+    max-width: 1600px; /* 전체 폭을 좀 더 넓힘 */
     padding: 20px 0;
 }
 
@@ -30,9 +29,17 @@ h1 {
     display: flex;
     flex-direction: row;
     justify-content: center;
-    align-items: flex-start; /* 상단 정렬로 변경 */
-    gap: 100px;
+    align-items: flex-start;
+    gap: 40px; /* 간격 조정 */
     flex-wrap: wrap;
+}
+
+/* 왼쪽 패널 (게이지 + 센서값) */
+.left-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
+    margin-top: 20px;
 }
 
 /* 게이지 섹션 */
@@ -40,8 +47,6 @@ h1 {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: flex-start;
-    margin-top: 50px; /* 차트와 높이 밸런스를 맞추기 위해 */
 }
 
 .gauge-wrapper {
@@ -51,7 +56,7 @@ h1 {
     display: flex;
     flex-direction: column;
     align-items: center;
-    margin-bottom: 20px;
+    margin-bottom: 10px;
 }
 
 .gauge-body {
@@ -93,7 +98,7 @@ h1 {
 }
 
 .gauge-text {
-    margin-top: 10px;
+    margin-top: 0px;
     position: relative;
     z-index: 20;
     text-align: center;
@@ -101,29 +106,45 @@ h1 {
 
 #duty-val { font-size: 4rem; font-weight: bold; color: #fff; }
 .unit { font-size: 1.5rem; color: #888; margin-left: 5px; }
+.info-text { font-size: 1.2rem; color: #aaa; margin-top: 5px; font-weight: 500; }
 
-.pedal-info { 
-    font-size: 1.3rem; color: #aaa; margin-top: 15px; font-weight: 500;
+/* [추가] 센서 확인 박스 */
+.sensor-box {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid #333;
+    border-radius: 10px;
+    padding: 20px;
+    width: 300px; /* 게이지와 너비 맞춤 */
+    box-sizing: border-box;
 }
+.sensor-label { font-size: 0.9rem; color: #00d2ff; letter-spacing: 1px; margin-bottom: 10px; }
+.sensor-value { font-size: 2.5rem; font-weight: bold; color: #fff; }
+.unit-sm { font-size: 1rem; color: #888; }
+.sensor-status { margin-top: 5px; font-size: 0.8rem; color: #666; }
 
-/* 차트 섹션 수정 */
+/* 차트 섹션 (2x2) */
 .chart-section {
-    width: 600px;
-    height: auto;
-    min-height: 450px;
+    width: 900px; /* 2열을 위해 너비 확장 */
     background: rgba(255, 255, 255, 0.05);
     border-radius: 15px;
-    padding: 15px;
+    padding: 20px;
     border: 1px solid #333;
     display: flex;
     flex-direction: column;
 }
 
+.chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding: 0 10px;
+}
+.chart-title { font-size: 1.2rem; color: #ddd; }
+
 .chart-controls {
     display: flex;
-    justify-content: flex-end;
     gap: 8px;
-    margin-bottom: 10px;
 }
 
 .time-btn {
@@ -144,19 +165,33 @@ h1 {
     font-weight: bold;
 }
 
+/* [핵심] 2x2 그리드 레이아웃 */
+.chart-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr; /* 1:1 비율로 2열 */
+    gap: 15px;
+}
+
+.chart-wrapper {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    padding: 10px;
+    border: 1px solid #222;
+}
+
 .chart-label {
     text-align: left;
     font-size: 0.9rem;
-    color: #888;
+    color: #aaa;
     margin-bottom: 5px;
     padding-left: 5px;
 }
 
-/* 차트 컨테이너 높이: 4개를 넣으려면 높이를 조금 줄이는 게 보기에 좋습니다 */
+/* 개별 차트 컨테이너 높이 */
 .chart-container {
     position: relative;
     width: 100%;
-    height: 150px; /* 기존 180px에서 축소 */
+    height: 180px; /* 높이 적절히 조절 */
 }
 
 /* 경고창 */
