@@ -77,11 +77,10 @@ def play_siren_thread():
     def _run_siren():
         try:
             sd.default.device = AUDIO_CARD_ID
-            # 볼륨 조절 (필요시)
             os.system(f"amixer -c {AUDIO_CARD_ID} set PCM 40% > /dev/null 2>&1")
             
             sample_rate = 48000; beep_freq = 600
-            beep_duration = 0.3; silence_duration = 0.2; repeats = 4 # [수정] 조금 더 긴박하게
+            beep_duration = 0.3; silence_duration = 0.2; repeats = 4
             
             t_beep = np.linspace(0, beep_duration, int(sample_rate * beep_duration), endpoint=False)
             beep_wave = np.sign(np.sin(2 * np.pi * beep_freq * t_beep)).astype(np.float32)
@@ -132,8 +131,6 @@ def hardware_loop():
     override_end_time = 0; last_pedal_value = 0; last_time = time.time()
     prev_over_90 = False; last_pedal_active_time = time.time()
     safety_lock_active = False; safety_cause_msg = ""
-    
-    # [중요] 이전 루프의 위험 상태 기억용 변수
     prev_front_danger = False
 
     ser = None
@@ -169,29 +166,20 @@ def hardware_loop():
                 trigger_safety = False
                 detected_reason = ""
                 
-                # --- [수정된 전방 장애물 로직] ---
+                # [전방 장애물]
                 front_danger = False
-                
-                # 조건: 거리가 1m 이하이고 페달을 밟고 있을 때
                 if final_dist > 0 and final_dist <= COLLISION_DIST_LIMIT and current_pedal_value > 0:
                     front_danger = True
                     detected_reason = "⚠️ 전방을 주의하세요!"
-                    
-                    # [소리] 위험이 처음 감지된 순간에 소리 재생
-                    if not prev_front_danger:
-                        play_siren_thread()
+                    if not prev_front_danger: play_siren_thread()
 
                 if front_danger:
-                    # 위험 상황: 즉시 정지 및 경고
                     current_safety_reason = detected_reason
                     current_remaining_time = 0
                     target_speed = 0
                 else:
-                    # [해제] 위험 상황이 끝났을 때 경고 메시지 즉시 제거
-                    if prev_front_danger:
-                        current_safety_reason = None
+                    if prev_front_danger: current_safety_reason = None
                     
-                    # --- 기존 안전 로직 (급발진/과속) ---
                     if safety_lock_active:
                         remaining = override_end_time - current_time
                         current_remaining_time = max(0, int(remaining))
@@ -213,7 +201,8 @@ def hardware_loop():
                             angular_velocity = delta_angle / dt
                             current_angular_velocity = angular_velocity
                             
-                            if abs(angular_velocity) >= CRITICAL_ANGULAR_VELOCITY:
+                            # [수정됨] abs() 제거 -> 양수(밟을 때)만 체크
+                            if angular_velocity >= CRITICAL_ANGULAR_VELOCITY:
                                 trigger_safety = True; detected_reason = "⚠️ 급발진 감지!"
                             
                             is_over_90 = (current_pedal_value >= 90)
@@ -239,7 +228,6 @@ def hardware_loop():
                                 if (current_time - last_pedal_active_time) >= IDLE_TIMEOUT: target_speed = 0
                                 else: target_speed = IDLE_SPEED
                 
-                # 상태 업데이트
                 prev_front_danger = front_danger
 
                 pwm_a.ChangeDutyCycle(target_speed)
