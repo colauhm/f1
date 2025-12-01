@@ -102,7 +102,27 @@ IDLE_SPEED = 15
 
 IDLE_TIMEOUT = 5.0
 
-AUDIO_CARD_ID = 2
+# ---- [핵심] 오디오 장치 자동 검색 함수 ----
+def get_usb_audio_id():
+    """USB라는 이름이 들어간 출력 장치 ID를 자동으로 찾습니다."""
+    try:
+        devices = sd.query_devices()
+        # 1순위: USB가 이름에 있고 출력 채널이 있는 장치
+        for i, dev in enumerate(devices):
+            if 'USB' in dev['name'] and dev['max_output_channels'] > 0:
+                print(f"✅ Found USB Audio Device: ID {i} ({dev['name']})")
+                return i
+        
+        # 2순위: 찾지 못했다면 시스템 기본 출력 장치 사용
+        default_output = sd.default.device[1]
+        print(f"⚠️ USB Audio not found. Using system default ID: {default_output}")
+        return default_output
+    except Exception as e:
+        print(f"❌ Audio Device Search Error: {e}")
+        return 0 # 정말 아무것도 안 되면 0번 시도
+
+# 여기서 자동으로 ID를 가져옵니다.
+AUDIO_CARD_ID = get_usb_audio_id()
 
 
 
