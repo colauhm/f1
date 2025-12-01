@@ -4,9 +4,7 @@ import time
 import serial
 import queue
 from collections import deque
-from fastapi import APIRouter, FastAPI, WebSocket
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import APIRouter, WebSocket
 import os
 import numpy as np
 import sounddevice as sd
@@ -31,8 +29,7 @@ except ImportError:
             def stop(self): pass
     GPIO = MockGPIO()
 
-app = FastAPI()
-app.mount("/static", StaticFiles(directory="."), name="static")
+# ★ 주의: 여기서 app = FastAPI()를 만들면 안 됩니다!
 router = APIRouter(prefix="/ws")
 
 # ---- 2. 핀 설정 ----
@@ -50,7 +47,20 @@ SAFETY_LOCK_DURATION = 5.0
 SAFETY_SPEED = 15
 IDLE_SPEED = 15
 IDLE_TIMEOUT = 5.0
-AUDIO_CARD_ID = 0 
+
+# [추가] 오디오 장치 자동 검색 함수
+def get_usb_audio_id():
+    try:
+        devices = sd.query_devices()
+        for i, dev in enumerate(devices):
+            if 'USB' in dev['name'] and dev['max_output_channels'] > 0:
+                print(f"✅ Found USB Audio at ID: {i} ({dev['name']})")
+                return i
+    except: pass
+    print("⚠️ USB Audio not found, using default ID 0")
+    return 0
+
+AUDIO_CARD_ID = get_usb_audio_id() # 자동 설정
 
 # ---- 전역 변수 ----
 current_duty = 0.0
@@ -66,7 +76,7 @@ data_queue = queue.Queue()
 def play_siren_thread():
     def _run_siren():
         try:
-            sd.default.device = AUDIO_CARD_ID
+            # sd.default.device = AUDIO_CARD_ID (글로벌 설정보다는 명시적 사용 추천)
             os.system(f"amixer -c {AUDIO_CARD_ID} set PCM 20% > /dev/null 2>&1")
             
             sample_rate = 44100
@@ -80,7 +90,7 @@ def play_siren_thread():
             silence_wave = np.zeros(int(sample_rate * silence_duration), dtype=np.float32)
             full_wave = np.concatenate([beep_wave, silence_wave] * repeats)
 
-            sd.play(full_wave * 0.5, sample_rate, blocking=True)
+            sd.play(full_wave * 0.5, sample_rate, device=AUDIO_CARD_ID, blocking=True)
             os.system(f"amixer -c {AUDIO_CARD_ID} set PCM 70% > /dev/null 2>&1")
         except Exception as e:
             print(f"[Audio Error] {e}")
@@ -133,7 +143,7 @@ def hardware_loop():
                 current_pedal_raw = current_pedal_value
                 current_time = time.time()
 
-                # --- 안전 로직 (생략 없이 기존과 동일) ---
+                # --- 안전 로직 ---
                 trigger_safety = False
                 detected_reason = ""
 
@@ -190,11 +200,11 @@ def hardware_loop():
                 last_pedal_value = current_pedal_value
                 last_time = current_time
 
-                # [핵심 수정] 큐에 페달(p)과 모터속도(d)를 같이 넣음
+                # 큐에 데이터 넣기
                 data_queue.put({
                     "t": current_time * 1000, 
-                    "p": current_pedal_value,  # 페달 입력
-                    "d": current_duty,         # 모터 속도 (Duty)
+                    "p": current_pedal_value,
+                    "d": current_duty,
                     "r": 1 if safety_lock_active else 0
                 })
 
@@ -235,15 +245,3 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.send_json(payload)
             await asyncio.sleep(0.05) 
     except Exception: pass
-
-app.include_router(router)
-
-@app.get("/")
-async def get_index():
-    with open("index.html", "r", encoding="utf-8") as f:
-        return HTMLResponse(content=f.read())
-
-if __name__ == "__main__":
-    start_hardware()
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
