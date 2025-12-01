@@ -36,38 +36,38 @@ h1 { font-weight: 200; margin-bottom: 30px; color: #00d2ff; text-shadow: 0 0 10p
 .chart-controls { display: flex; gap: 8px; }
 /* ---- 시간 선택 버튼 ---- */
 .time-btn {
-    background: #222;
+    background: transparent; /* [수정] 배경 투명하게 (주변과 동일) */
     border: 1px solid #444;
     color: #888;
     padding: 6px 14px;
     border-radius: 6px;
     cursor: pointer;
     font-size: 0.85rem;
-    transition: all 0.2s ease-in-out;
+    transition: all 0.3s ease; /* 부드러운 전환 */
 }
 
-/* [Hover] 마우스 올렸을 때: 형광 네온 글로우 (빛나는 효과) */
+/* [Hover] 마우스 올렸을 때: 아주 은은한 빛 */
 .time-btn:hover {
-    background: rgba(57, 255, 20, 0.1); /* 연한 형광 배경 */
-    border-color: #39ff14;
-    color: #39ff14;
+    background: rgba(57, 255, 20, 0.05); /* 배경은 아주 연한 틴트만 */
+    border-color: #39ff14; /* 테두리는 형광색 */
+    color: #39ff14;        /* 글자도 형광색 */
     
-    /* 빛이 퍼지는 효과 (Glow) */
-    box-shadow: 0 0 10px #39ff14, 
-                0 0 20px rgba(57, 255, 20, 0.4);
+    /* [수정] 그림자를 넓고 연하게 퍼뜨려서 '은은한' 느낌 강조 */
+    box-shadow: 0 0 15px rgba(57, 255, 20, 0.3), 
+                inset 0 0 5px rgba(57, 255, 20, 0.1);
     
-    /* 글자도 빛나게 */
-    text-shadow: 0 0 5px rgba(57, 255, 20, 0.8);
+    /* 텍스트 빛 번짐도 연하게 */
+    text-shadow: 0 0 8px rgba(57, 255, 20, 0.4);
 }
 
-/* [Active] 클릭된 상태: 빛 번짐(그림자) 없이 깔끔한 형광색 */
+/* [Active] 클릭된 상태: 빛 번짐 없이 깔끔한 형광색 (배경 투명 유지) */
 .time-btn.active {
-    background: rgba(57, 255, 20, 0.2); /* 호버보다 약간 더 진한 배경 */
+    background: transparent; /* 배경 투명 */
     border-color: #39ff14;
     color: #39ff14;
     font-weight: bold;
     
-    /* 빛 번짐 효과 제거 (Flat) */
+    /* 빛 번짐 효과 제거 */
     box-shadow: none; 
     text-shadow: none;
 }
