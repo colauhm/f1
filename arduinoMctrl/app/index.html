@@ -30,12 +30,23 @@
                     <div class="gauge-text">
                         <span id="duty-val">0</span><span class="unit">%</span>
                     </div>
-                    <div class="info-text">
-                        Pedal Input: <span id="pedal-val">0</span>
+                </div>
+
+                <div class="status-info-box">
+                    <div class="info-row">
+                        <span class="info-label">각속도 (Vel):</span>
+                        <span class="info-value" id="val-velocity">0.0</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">거리 (Dist):</span>
+                        <span class="info-value" id="val-distance">0.0</span> <span class="unit-xs">cm</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">최근 페달(2회):</span>
+                        <span class="info-value" id="val-history">- , -</span>
                     </div>
                 </div>
-                
-                </div>
+            </div>
 
             <div class="chart-section">
                 <div class="chart-header">
@@ -50,27 +61,19 @@
                 <div class="chart-grid">
                     <div class="chart-wrapper">
                         <div class="chart-label">Pedal Input</div>
-                        <div class="chart-container">
-                            <canvas id="pedalChart"></canvas>
-                        </div>
+                        <div class="chart-container"><canvas id="pedalChart"></canvas></div>
                     </div>
                     <div class="chart-wrapper">
                         <div class="chart-label">Motor Speed</div>
-                        <div class="chart-container">
-                            <canvas id="motorChart"></canvas>
-                        </div>
+                        <div class="chart-container"><canvas id="motorChart"></canvas></div>
                     </div>
                     <div class="chart-wrapper">
                         <div class="chart-label">Angular Velocity</div>
-                        <div class="chart-container">
-                            <canvas id="velocityChart"></canvas>
-                        </div>
+                        <div class="chart-container"><canvas id="velocityChart"></canvas></div>
                     </div>
                     <div class="chart-wrapper">
-                        <div class="chart-label">Distance (Filtered)</div>
-                        <div class="chart-container">
-                            <canvas id="distanceChart"></canvas>
-                        </div>
+                        <div class="chart-label">Distance (Sonar)</div>
+                        <div class="chart-container"><canvas id="distanceChart"></canvas></div>
                     </div>
                 </div>
             </div>
