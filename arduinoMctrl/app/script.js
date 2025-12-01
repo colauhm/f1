@@ -1,19 +1,25 @@
-// 현재 페이지가 https라면 wss를, 아니면 ws를 쓰도록 자동 설정
-var protocol = (location.protocol === 'https:') ? 'wss://' : 'ws://';
-var wsAddress = protocol + location.host + "/ws";
+const wsUrl = "ws://" + window.location.host + "/ws";
+const ws = new WebSocket(wsUrl);
 
-const ws = new WebSocket(wsAddress);
 const needle = document.getElementById("needle");
 const valText = document.getElementById("duty-val");
 const warningBox = document.getElementById("warning-dialog");
 const warningText = document.getElementById("warning-text");
 
-// [추가] 정보창 UI 요소
+// 정보창 UI 요소
 const valVelocity = document.getElementById("val-velocity");
 const valDistance = document.getElementById("val-distance");
-const valHistory = document.getElementById("val-history");
+const valCount = document.getElementById("val-count");
 
-// 버퍼
+// [핵심] 안전 기준 임계값 (Backend와 동일하게 설정)
+const THRESHOLD_VELOCITY = 420; // 420 이상이면 위험
+const THRESHOLD_DIST_MIN = 100; // 100 이하이면 위험
+const THRESHOLD_COUNT = 3;      // 3회 이상이면 위험 (잠김)
+
+// 색상 상수
+const COLOR_GREEN = "#39ff14";
+const COLOR_RED = "#ff0000";
+
 let pedalBuffer = [], motorBuffer = [], velocityBuffer = [], distanceBuffer = [];
 const MAX_STORE_MINUTES = 5; 
 let viewSeconds = 60; 
@@ -78,7 +84,7 @@ ws.onmessage = (event) => {
         const current = data.current;
         const history = data.history;
 
-        // 1. 게이지 업데이트
+        // 1. 게이지
         if (current.duty !== undefined) {
             const duty = parseFloat(current.duty);
             valText.innerText = duty.toFixed(0);
@@ -91,24 +97,39 @@ ws.onmessage = (event) => {
         if (current.reason) {
             warningBox.style.display = "block";
             warningText.innerText = current.reason;
-            // 즉시 정지(0초)인 경우 빨간색 강조
             warningBox.style.backgroundColor = (current.remaining_time === 0) 
                 ? "rgba(255, 0, 0, 1)" : "rgba(255, 0, 0, 0.9)";
         } else {
             warningBox.style.display = "none";
         }
 
-        // 3. 차트 데이터 & 정보창 업데이트
+        // 3. 데이터 업데이트
         if (history && history.length > 0) {
-            let lastPt = history[history.length - 1]; // 가장 최신 데이터
+            let lastPt = history[history.length - 1]; // 최신 데이터
 
-            // [정보창 업데이트]
-            if (lastPt.v !== undefined) valVelocity.innerText = lastPt.v.toFixed(1);
-            if (lastPt.dist !== undefined) valDistance.innerText = lastPt.dist.toFixed(1);
-            if (lastPt.h && Array.isArray(lastPt.h)) {
-                valHistory.innerText = lastPt.h.join(", ");
+            // [정보창 값 업데이트 및 색상 로직]
+            
+            // A. 각속도
+            const v = lastPt.v || 0;
+            valVelocity.innerText = v.toFixed(1);
+            valVelocity.style.color = (Math.abs(v) >= THRESHOLD_VELOCITY) ? COLOR_RED : COLOR_GREEN;
+
+            // B. 거리 (100cm 이하면 빨강)
+            const d = lastPt.dist || 0;
+            valDistance.innerText = d.toFixed(1);
+            // 0은 측정 안됨 혹은 오류일 수 있으므로 제외할지 결정(여기선 0 초과 조건 추가)
+            if (d > 0 && d <= THRESHOLD_DIST_MIN) {
+                valDistance.style.color = COLOR_RED;
+            } else {
+                valDistance.style.color = COLOR_GREEN;
             }
 
+            // C. 2초내 급가속 횟수 (3회 이상이면 빨강)
+            const count = lastPt.pc || 0;
+            valCount.innerText = count;
+            valCount.style.color = (count >= THRESHOLD_COUNT) ? COLOR_RED : COLOR_GREEN;
+
+            // 차트 버퍼 추가
             history.forEach(pt => {
                 const isRestricted = (pt.r === 1);
                 pedalBuffer.push({ x: pt.t, y: pt.p, restricted: isRestricted });
