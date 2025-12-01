@@ -102,7 +102,7 @@ IDLE_SPEED = 15
 
 IDLE_TIMEOUT = 5.0
 
-AUDIO_CARD_ID = 0
+AUDIO_CARD_ID = 2
 
 
 
@@ -140,7 +140,7 @@ def play_siren_thread():
 
            
 
-            sample_rate = 44100
+            sample_rate = 48000
 
             beep_freq = 500
 
