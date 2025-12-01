@@ -22,7 +22,7 @@ except ImportError:
         def setwarnings(self, f): pass
         def setup(self, p, m, pull_up_down=None): pass
         def output(self, p, s): pass
-        def input(self, p): return 1 # 기본 1 (안 눌림)
+        def input(self, p): return 1 
         def cleanup(self): print("GPIO Cleaned up")
         class PWM:
             def __init__(self, p, f): pass
@@ -39,7 +39,7 @@ router = APIRouter(prefix="/ws")
 PWM_A_PIN = 13; IN1_PIN = 23; IN2_PIN = 24
 PWM_B_PIN = 12; IN3_PIN = 5; IN4_PIN = 6
 TRIG_PIN = 27; ECHO_PIN = 17 
-BUTTON_PIN = 21 # 해제용 푸시 버튼
+BUTTON_PIN = 21 
 
 SERIAL_PORT = '/dev/ttyUSB0'; BAUD_RATE = 115200
 
@@ -51,7 +51,7 @@ RAPID_PRESS_WINDOW = 2.0
 SAFETY_SPEED = 15
 IDLE_SPEED = 15
 IDLE_TIMEOUT = 5.0
-COLLISION_DIST_LIMIT = 100.0 # 1m 이하 위험
+COLLISION_DIST_LIMIT = 100.0 
 
 # ---- 오디오 장치 ----
 def get_usb_audio_id():
@@ -133,10 +133,8 @@ def hardware_loop():
     
     last_pedal_value = 0; last_time = time.time()
     prev_over_90 = False; last_pedal_active_time = time.time()
-    
-    safety_lock_active = False 
-    safety_cause_msg = ""
-    
+    safety_lock_active = False; safety_cause_msg = ""
+    unlock_btn_latched = False
     prev_front_danger = False
 
     ser = None
@@ -150,9 +148,16 @@ def hardware_loop():
                 try: ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1); ser.flush()
                 except: time.sleep(1); continue
             
+            # [최적화 핵심] 쌓여있는 시리얼 데이터를 모두 읽어서 버리고, 가장 마지막(최신) 값만 가져옴
             raw_line = ""
             if ser and ser.in_waiting > 0:
-                try: raw_line = ser.readline().decode('utf-8').strip()
+                try:
+                    # 버퍼에 있는 모든 내용을 읽어옴
+                    lines = ser.read_all().decode('utf-8').split('\n')
+                    # 빈 문자열 제외하고 가장 마지막 유효한 데이터 선택
+                    valid_lines = [l.strip() for l in lines if l.strip().isdigit()]
+                    if valid_lines:
+                        raw_line = valid_lines[-1] # 가장 최신 값
                 except: pass
             
             if raw_line.isdigit():
@@ -168,7 +173,7 @@ def hardware_loop():
                 final_dist = 0.0
                 if len(dist_history) > 0: final_dist = sum(dist_history) / len(dist_history)
 
-                # 2. 버튼 상태 (리눅스: 눌리면 0, 안눌리면 1)
+                # 2. 버튼
                 is_btn_pressed = False
                 if PLATFORM == "LINUX":
                     is_btn_pressed = (GPIO.input(BUTTON_PIN) == 0)
@@ -177,24 +182,18 @@ def hardware_loop():
                 trigger_safety = False
                 detected_reason = ""
                 
-                # 전방 위험 판단
                 front_danger = False
                 if final_dist > 0 and final_dist <= COLLISION_DIST_LIMIT and current_pedal_value > 0:
                     front_danger = True
 
-                # =========================================================
-                # [우선순위 1] 급발진/과속 잠금 상태 (전방 경고 무시)
-                # =========================================================
+                # [우선순위 1] 잠금 상태
                 if safety_lock_active:
                     target_speed = SAFETY_SPEED
                     current_remaining_time = 999 
                     
-                    # [수정된 해제 시퀀스]
                     if current_pedal_value > 0:
-                        # 1단계: 발을 먼저 떼야 함 (이때 버튼 눌러도 소용 없음)
                         current_safety_reason = "⚠️ 엑셀에서 발을 먼저 떼세요!"
                     else:
-                        # 2단계: 발을 뗐음 -> 이제 버튼 누르면 해제
                         if is_btn_pressed:
                             safety_lock_active = False
                             current_safety_reason = None
@@ -203,20 +202,15 @@ def hardware_loop():
                         else:
                             current_safety_reason = "🔵 푸쉬버튼을 눌러 제한을 해제하세요"
 
-                # =========================================================
-                # [우선순위 2] 전방 장애물 감지 (잠금 상태 아닐 때만)
-                # =========================================================
+                # [우선순위 2] 전방 장애물
                 elif front_danger:
                     detected_reason = "⚠️ 전방을 주의하세요!"
                     current_safety_reason = detected_reason
                     current_remaining_time = 0
                     target_speed = 0
-                    
                     if not prev_front_danger: play_siren_thread()
                 
-                # =========================================================
-                # [우선순위 3] 정상 주행 및 새로운 위험 감지
-                # =========================================================
+                # [우선순위 3] 정상 주행
                 else:
                     if prev_front_danger: current_safety_reason = None
                     
@@ -227,7 +221,6 @@ def hardware_loop():
                         angular_velocity = delta_angle / dt
                         current_angular_velocity = angular_velocity
                         
-                        # 양수(가속) 각속도만 체크
                         if angular_velocity >= CRITICAL_ANGULAR_VELOCITY:
                             trigger_safety = True; detected_reason = "⚠️ 급발진 감지!"
                         
@@ -267,7 +260,10 @@ def hardware_loop():
                     "r": 1 if (safety_lock_active or front_danger) else 0,
                     "pc": len(press_timestamps)
                 })
-            time.sleep(0.05)
+            
+            # [복구] 다시 0.01초로 빠르게 설정 (반응속도 향상)
+            time.sleep(0.01)
+
     except Exception as e: print(e)
     finally:
         pwm_a.stop(); pwm_b.stop(); GPIO.cleanup()
@@ -299,6 +295,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 }
             }
             await websocket.send_json(payload)
+            # 웹소켓 전송 주기는 0.05초 유지 (화면 갱신은 20fps면 충분)
             await asyncio.sleep(0.05)
     except: pass
 app.include_router(router)
