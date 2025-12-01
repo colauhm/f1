@@ -22,30 +22,34 @@ let pedalBuffer = [], motorBuffer = [], velocityBuffer = [], distanceBuffer = []
 const MAX_STORE_MINUTES = 5; 
 let viewSeconds = 60; 
 
-// [추가] 인포메이션 아이콘 마우스 이벤트 로직
+// [핵심 수정] 마우스 이벤트 로직
 document.addEventListener("DOMContentLoaded", () => {
     const icons = document.querySelectorAll(".info-icon");
-    const grid = document.getElementById("chartGrid");
+    const chartGrid = document.getElementById("chartGrid");
 
     icons.forEach(icon => {
-        // 마우스 올렸을 때
         icon.addEventListener("mouseenter", (e) => {
             const wrapper = e.target.closest(".chart-wrapper");
-            
-            // 1. 그리드 전체에 'dimming' 클래스 추가
-            grid.classList.add("dimming");
-            
-            // 2. 해당 그래프 박스에 'active' 클래스 추가
-            wrapper.classList.add("active");
+            if(wrapper) {
+                wrapper.classList.add("active"); // 공통: 하이라이트
+
+                // [그래프 영역인 경우] -> 주변 어둡게 하기 (Dimming)
+                if (wrapper.parentElement.id === "chartGrid") {
+                    chartGrid.classList.add("dimming");
+                }
+            }
         });
 
-        // 마우스 뗐을 때
         icon.addEventListener("mouseleave", (e) => {
             const wrapper = e.target.closest(".chart-wrapper");
-            
-            // 클래스 제거 (원상복구)
-            grid.classList.remove("dimming");
-            wrapper.classList.remove("active");
+            if(wrapper) {
+                wrapper.classList.remove("active");
+                
+                // [그래프 영역인 경우] -> Dimming 해제
+                if (wrapper.parentElement.id === "chartGrid") {
+                    chartGrid.classList.remove("dimming");
+                }
+            }
         });
     });
 });
@@ -111,7 +115,6 @@ ws.onmessage = (event) => {
         const current = data.current;
         const history = data.history;
 
-        // 1. 게이지
         if (current.duty !== undefined) {
             const duty = parseFloat(current.duty);
             valText.innerText = duty.toFixed(0);
@@ -120,7 +123,6 @@ ws.onmessage = (event) => {
             needle.style.transform = `rotate(${angle}deg)`;
         }
 
-        // 2. 경고창
         if (current.reason) {
             warningBox.style.display = "block";
             warningText.innerText = current.reason;
@@ -130,11 +132,9 @@ ws.onmessage = (event) => {
             warningBox.style.display = "none";
         }
 
-        // 3. 데이터 업데이트
         if (history && history.length > 0) {
             let lastPt = history[history.length - 1];
 
-            // 정보창 업데이트 (색상 로직 포함)
             const v = lastPt.v || 0;
             valVelocity.innerText = v.toFixed(1);
             valVelocity.style.color = (Math.abs(v) >= THRESHOLD_VELOCITY) ? COLOR_RED : COLOR_GREEN;

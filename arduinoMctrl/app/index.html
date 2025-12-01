@@ -32,18 +32,33 @@
                     </div>
                 </div>
 
-                <div class="status-info-box">
-                    <div class="info-row">
-                        <span class="info-label">각속도 (Vel):</span>
-                        <span class="info-value" id="val-velocity">0.0</span>
+                <div class="status-info-box chart-wrapper" id="statusBox">
+                    <div class="chart-top-row">
+                        <div class="chart-label" style="color: #00d2ff;">Safety Status</div>
+                        <div class="info-icon">
+                            <i>i</i>
+                            <div class="tooltip">
+                                안전 운행 지표입니다.<br>
+                                • 각속도 420↑ : 급발진<br>
+                                • 거리 100↓ : 충돌 위험<br>
+                                • 급가속 3회↑ : 과속
+                            </div>
+                        </div>
                     </div>
-                    <div class="info-row">
-                        <span class="info-label">거리 (Dist):</span>
-                        <span class="info-value" id="val-distance">0.0</span> <span class="unit-xs">cm</span>
-                    </div>
-                    <div class="info-row">
-                        <span class="info-label">급가속 시도(2초내):</span>
-                        <span class="info-value" id="val-count">0</span> <span class="unit-xs">회</span>
+                    
+                    <div class="info-content">
+                        <div class="info-row">
+                            <span class="info-label">각속도 (deg/s):</span>
+                            <span class="info-value" id="val-velocity">0.0</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">거리 (cm):</span>
+                            <span class="info-value" id="val-distance">0.0</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">급가속 시도(2초내):</span>
+                            <span class="info-value" id="val-count">0</span> <span class="unit-xs">회</span>
+                        </div>
                     </div>
                 </div>
             </div>
