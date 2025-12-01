@@ -267,7 +267,7 @@ def hardware_loop():
                     "r": 1 if (safety_lock_active or front_danger) else 0,
                     "pc": len(press_timestamps)
                 })
-            time.sleep(0.01)
+            time.sleep(0.05)
     except Exception as e: print(e)
     finally:
         pwm_a.stop(); pwm_b.stop(); GPIO.cleanup()
