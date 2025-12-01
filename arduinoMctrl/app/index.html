@@ -35,7 +35,7 @@
                 <div class="status-info-box">
                     <div class="info-row">
                         <span class="info-label">각속도 (Vel):</span>
-                        <span class="info-value" id="val-velocity">0.0</span> <span class="unit-xs">deg/s</span>
+                        <span class="info-value" id="val-velocity">0.0</span>
                     </div>
                     <div class="info-row">
                         <span class="info-label">거리 (Dist):</span>
@@ -58,23 +58,52 @@
                     </div>
                 </div>
 
-                <div class="chart-grid">
+                <div class="chart-grid" id="chartGrid">
+                    
                     <div class="chart-wrapper">
-                        <div class="chart-label">Pedal Input (%)</div>
+                        <div class="chart-top-row">
+                            <div class="chart-label">Pedal Input (%)</div>
+                            <div class="info-icon">
+                                <i>i</i>
+                                <div class="tooltip">사용자가 밟은 엑셀 페달의 입력값(0~100%)입니다.</div>
+                            </div>
+                        </div>
                         <div class="chart-container"><canvas id="pedalChart"></canvas></div>
                     </div>
+
                     <div class="chart-wrapper">
-                        <div class="chart-label">Motor Speed (%)</div>
+                        <div class="chart-top-row">
+                            <div class="chart-label">Motor Speed (%)</div>
+                            <div class="info-icon">
+                                <i>i</i>
+                                <div class="tooltip">안전 로직이 반영된 실제 모터의 출력값입니다.</div>
+                            </div>
+                        </div>
                         <div class="chart-container"><canvas id="motorChart"></canvas></div>
                     </div>
+
                     <div class="chart-wrapper">
-                        <div class="chart-label">Angular Velocity (deg/s)</div>
+                        <div class="chart-top-row">
+                            <div class="chart-label">Angular Velocity (deg/s)</div>
+                            <div class="info-icon">
+                                <i>i</i>
+                                <div class="tooltip">페달을 밟는 속도(변화량)입니다. 급발진 감지의 기준이 됩니다.</div>
+                            </div>
+                        </div>
                         <div class="chart-container"><canvas id="velocityChart"></canvas></div>
                     </div>
+
                     <div class="chart-wrapper">
-                        <div class="chart-label">Distance (Sonar)</div>
+                        <div class="chart-top-row">
+                            <div class="chart-label">Distance (Sonar)</div>
+                            <div class="info-icon">
+                                <i>i</i>
+                                <div class="tooltip">초음파 센서로 감지한 전방 장애물과의 거리(cm)입니다.</div>
+                            </div>
+                        </div>
                         <div class="chart-container"><canvas id="distanceChart"></canvas></div>
                     </div>
+
                 </div>
             </div>
         </div>

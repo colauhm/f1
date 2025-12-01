@@ -3,22 +3,18 @@ var protocol = (location.protocol === 'https:') ? 'wss://' : 'ws://';
 var wsAddress = protocol + location.host + "/ws";
 
 const ws = new WebSocket(wsAddress);
+
 const needle = document.getElementById("needle");
 const valText = document.getElementById("duty-val");
 const warningBox = document.getElementById("warning-dialog");
 const warningText = document.getElementById("warning-text");
-
-// 정보창 UI 요소
 const valVelocity = document.getElementById("val-velocity");
 const valDistance = document.getElementById("val-distance");
 const valCount = document.getElementById("val-count");
 
-// [핵심] 안전 기준 임계값 (Backend와 동일하게 설정)
-const THRESHOLD_VELOCITY = 420; // 420 이상이면 위험
-const THRESHOLD_DIST_MIN = 100; // 100 이하이면 위험
-const THRESHOLD_COUNT = 3;      // 3회 이상이면 위험 (잠김)
-
-// 색상 상수
+const THRESHOLD_VELOCITY = 420; 
+const THRESHOLD_DIST_MIN = 100; 
+const THRESHOLD_COUNT = 3;      
 const COLOR_GREEN = "#39ff14";
 const COLOR_RED = "#ff0000";
 
@@ -26,6 +22,35 @@ let pedalBuffer = [], motorBuffer = [], velocityBuffer = [], distanceBuffer = []
 const MAX_STORE_MINUTES = 5; 
 let viewSeconds = 60; 
 
+// [추가] 인포메이션 아이콘 마우스 이벤트 로직
+document.addEventListener("DOMContentLoaded", () => {
+    const icons = document.querySelectorAll(".info-icon");
+    const grid = document.getElementById("chartGrid");
+
+    icons.forEach(icon => {
+        // 마우스 올렸을 때
+        icon.addEventListener("mouseenter", (e) => {
+            const wrapper = e.target.closest(".chart-wrapper");
+            
+            // 1. 그리드 전체에 'dimming' 클래스 추가
+            grid.classList.add("dimming");
+            
+            // 2. 해당 그래프 박스에 'active' 클래스 추가
+            wrapper.classList.add("active");
+        });
+
+        // 마우스 뗐을 때
+        icon.addEventListener("mouseleave", (e) => {
+            const wrapper = e.target.closest(".chart-wrapper");
+            
+            // 클래스 제거 (원상복구)
+            grid.classList.remove("dimming");
+            wrapper.classList.remove("active");
+        });
+    });
+});
+
+// 차트 설정
 function createChartConfig(buffer, label, color = '#39ff14') {
     return {
         type: 'line',
@@ -107,31 +132,22 @@ ws.onmessage = (event) => {
 
         // 3. 데이터 업데이트
         if (history && history.length > 0) {
-            let lastPt = history[history.length - 1]; // 최신 데이터
+            let lastPt = history[history.length - 1];
 
-            // [정보창 값 업데이트 및 색상 로직]
-            
-            // A. 각속도
+            // 정보창 업데이트 (색상 로직 포함)
             const v = lastPt.v || 0;
             valVelocity.innerText = v.toFixed(1);
             valVelocity.style.color = (Math.abs(v) >= THRESHOLD_VELOCITY) ? COLOR_RED : COLOR_GREEN;
 
-            // B. 거리 (100cm 이하면 빨강)
             const d = lastPt.dist || 0;
             valDistance.innerText = d.toFixed(1);
-            // 0은 측정 안됨 혹은 오류일 수 있으므로 제외할지 결정(여기선 0 초과 조건 추가)
-            if (d > 0 && d <= THRESHOLD_DIST_MIN) {
-                valDistance.style.color = COLOR_RED;
-            } else {
-                valDistance.style.color = COLOR_GREEN;
-            }
+            if (d > 0 && d <= THRESHOLD_DIST_MIN) valDistance.style.color = COLOR_RED;
+            else valDistance.style.color = COLOR_GREEN;
 
-            // C. 2초내 급가속 횟수 (3회 이상이면 빨강)
             const count = lastPt.pc || 0;
             valCount.innerText = count;
             valCount.style.color = (count >= THRESHOLD_COUNT) ? COLOR_RED : COLOR_GREEN;
 
-            // 차트 버퍼 추가
             history.forEach(pt => {
                 const isRestricted = (pt.r === 1);
                 pedalBuffer.push({ x: pt.t, y: pt.p, restricted: isRestricted });
