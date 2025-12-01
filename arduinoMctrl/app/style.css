@@ -21,7 +21,9 @@ h1 { font-weight: 200; margin-bottom: 30px; color: #00d2ff; text-shadow: 0 0 10p
 #duty-val { font-size: 4rem; font-weight: bold; color: #fff; }
 .unit { font-size: 1.5rem; color: #888; }
 
-/* [추가] 상태 정보 박스 스타일 */
+/* ... (위쪽 스타일 동일) ... */
+
+/* [수정] 상태 정보 박스 스타일 */
 .status-info-box {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid #333;
@@ -34,9 +36,17 @@ h1 { font-weight: 200; margin-bottom: 30px; color: #00d2ff; text-shadow: 0 0 10p
 .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; border-bottom: 1px solid #222; padding-bottom: 4px; }
 .info-row:last-child { border-bottom: none; margin-bottom: 0; }
 .info-label { color: #aaa; font-size: 0.9rem; }
-.info-value { color: #00d2ff; font-weight: bold; font-size: 1.1rem; }
+
+/* [수정] 기본 색상 제거 -> JS에서 green/red 동적 적용 */
+.info-value { 
+    font-weight: bold; 
+    font-size: 1.1rem; 
+    transition: color 0.2s ease; /* 색상 변경 시 부드럽게 */
+}
+
 .unit-xs { font-size: 0.8rem; color: #666; }
 
+/* ... (아래쪽 스타일 동일) ... */
 /* 차트 섹션 */
 .chart-section { width: 900px; background: rgba(255, 255, 255, 0.05); border-radius: 15px; padding: 20px; border: 1px solid #333; }
 .chart-header { display: flex; justify-content: space-between; margin-bottom: 15px; }
