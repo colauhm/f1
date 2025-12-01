@@ -34,15 +34,8 @@
                         Pedal Input: <span id="pedal-val">0</span>
                     </div>
                 </div>
-
-                <div class="sensor-box">
-                    <div class="sensor-label">ULTRASONIC SENSOR</div>
-                    <div class="sensor-value">
-                        <span id="dist-val">0.0</span> <span class="unit-sm">cm</span>
-                    </div>
-                    <div class="sensor-status" id="dist-status">Waiting...</div>
+                
                 </div>
-            </div>
 
             <div class="chart-section">
                 <div class="chart-header">
@@ -61,23 +54,20 @@
                             <canvas id="pedalChart"></canvas>
                         </div>
                     </div>
-
                     <div class="chart-wrapper">
                         <div class="chart-label">Motor Speed</div>
                         <div class="chart-container">
                             <canvas id="motorChart"></canvas>
                         </div>
                     </div>
-
                     <div class="chart-wrapper">
                         <div class="chart-label">Angular Velocity</div>
                         <div class="chart-container">
                             <canvas id="velocityChart"></canvas>
                         </div>
                     </div>
-
                     <div class="chart-wrapper">
-                        <div class="chart-label">Distance (Sonar)</div>
+                        <div class="chart-label">Distance (Filtered)</div>
                         <div class="chart-container">
                             <canvas id="distanceChart"></canvas>
                         </div>

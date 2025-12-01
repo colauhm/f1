@@ -3,9 +3,8 @@ import threading
 import time
 import serial
 import queue
-from collections import deque
+from collections import deque  # [중요] 이동 평균 계산용
 from fastapi import APIRouter, FastAPI, WebSocket
-from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 import os
 import numpy as np
@@ -40,7 +39,7 @@ router = APIRouter(prefix="/ws")
 PWM_A_PIN = 13; IN1_PIN = 23; IN2_PIN = 24
 PWM_B_PIN = 12; IN3_PIN = 5; IN4_PIN = 6
 
-# [추가] 초음파 센서 핀 설정
+# [최종 수정] 초음파 센서 핀 (Trig: 27, Echo: 17)
 TRIG_PIN = 27
 ECHO_PIN = 17
 
@@ -81,6 +80,9 @@ current_safety_reason = None
 current_remaining_time = 0
 stop_threads = False
 
+# [이동 평균 필터용 버퍼] 최근 10개 값 저장
+dist_history = deque(maxlen=10)
+
 # [데이터 큐]
 data_queue = queue.Queue()
 
@@ -108,37 +110,40 @@ def play_siren_thread():
             print(f"[Audio Error] {e}")
     threading.Thread(target=_run_siren, daemon=True).start()
 
-# ---- [추가] 초음파 센서 거리 측정 함수 ----
+# ---- 거리 측정 함수 (노이즈 필터링 포함) ----
 def read_distance():
-    # 윈도우/테스트 환경용 가짜 데이터
     if PLATFORM == "WINDOWS":
-        return 50 + 30 * np.sin(time.time()) + np.random.randint(-5, 5)
+        return 50 + 10 * np.sin(time.time()) + np.random.randint(-2, 2)
 
-    # 라즈베리파이 실제 센서 로직
     try:
         GPIO.output(TRIG_PIN, False)
-        time.sleep(0.000002)
+        time.sleep(0.000005)
         GPIO.output(TRIG_PIN, True)
         time.sleep(0.00001)
         GPIO.output(TRIG_PIN, False)
 
         start_time = time.time()
         stop_time = time.time()
-        timeout = start_time + 0.04  # 40ms 타임아웃 (약 7m)
+        timeout = start_time + 0.04  # 최대 7m 정도
 
         while GPIO.input(ECHO_PIN) == 0:
             start_time = time.time()
-            if start_time > timeout: return 0
+            if start_time > timeout: return None
 
         while GPIO.input(ECHO_PIN) == 1:
             stop_time = time.time()
-            if stop_time > timeout: return 0
+            if stop_time > timeout: return None
 
         elapsed = stop_time - start_time
         distance = (elapsed * 34300) / 2
-        return round(distance, 1)
+        
+        # 튀는 값(2cm 미만, 400cm 초과) 버리기
+        if 2 < distance < 400:
+            return distance
+        else:
+            return None
     except Exception:
-        return 0
+        return None
 
 # ---- 4. 하드웨어 제어 루프 ----
 def hardware_loop():
@@ -146,11 +151,11 @@ def hardware_loop():
 
     GPIO.setmode(GPIO.BCM); GPIO.setwarnings(False)
     
-    # 모터 핀 설정
+    # 모터 핀
     GPIO.setup(PWM_A_PIN, GPIO.OUT); GPIO.setup(IN1_PIN, GPIO.OUT); GPIO.setup(IN2_PIN, GPIO.OUT)
     GPIO.setup(PWM_B_PIN, GPIO.OUT); GPIO.setup(IN3_PIN, GPIO.OUT); GPIO.setup(IN4_PIN, GPIO.OUT)
     
-    # [추가] 초음파 핀 설정
+    # 초음파 핀 (22, 25)
     if PLATFORM == "LINUX":
         GPIO.setup(TRIG_PIN, GPIO.OUT)
         GPIO.setup(ECHO_PIN, GPIO.IN)
@@ -192,8 +197,6 @@ def hardware_loop():
                 current_pedal_value = max(0, min(100, current_pedal_value))
                 current_pedal_raw = current_pedal_value
                 current_time = time.time()
-                
-                # [변수 초기화] 루프마다 계산되는 값
                 current_angular_velocity = 0.0
 
                 # --- 안전 로직 ---
@@ -220,9 +223,7 @@ def hardware_loop():
                         delta_percent = current_pedal_value - last_pedal_value
                         delta_angle = (delta_percent / 100.0) * PEDAL_TOTAL_ANGLE
                         angular_velocity = delta_angle / dt
-                        
-                        # [저장] 그래프 출력을 위해 변수에 저장
-                        current_angular_velocity = angular_velocity
+                        current_angular_velocity = angular_velocity # 그래프용 저장
                         
                         if abs(angular_velocity) >= CRITICAL_ANGULAR_VELOCITY:
                             trigger_safety = True; detected_reason = "⚠️ 급발진 감지!"
@@ -248,7 +249,7 @@ def hardware_loop():
                             if (current_time - last_pedal_active_time) >= IDLE_TIMEOUT: target_speed = 0
                             else: target_speed = IDLE_SPEED
 
-                # 모터 제어
+                # 모터 출력
                 pwm_a.ChangeDutyCycle(target_speed)
                 pwm_b.ChangeDutyCycle(target_speed)
                 current_duty = target_speed
@@ -256,16 +257,23 @@ def hardware_loop():
                 last_pedal_value = current_pedal_value
                 last_time = current_time
                 
-                # [추가] 거리 측정
-                dist_val = read_distance()
+                # [거리 측정 및 평균 필터]
+                raw_dist = read_distance()
+                final_dist = 0.0
+                
+                if raw_dist is not None:
+                    dist_history.append(raw_dist) # 큐에 추가
+                
+                if len(dist_history) > 0:
+                    final_dist = sum(dist_history) / len(dist_history) # 평균 계산
 
-                # [수정] 큐에 v(각속도), dist(거리) 추가
+                # [데이터 전송]
                 data_queue.put({
                     "t": current_time * 1000,
                     "p": current_pedal_value,
                     "d": current_duty,
-                    "v": current_angular_velocity,  # [New] 각속도
-                    "dist": dist_val,               # [New] 거리
+                    "v": current_angular_velocity,
+                    "dist": round(final_dist, 1), # 평균값 전송
                     "r": 1 if safety_lock_active else 0
                 })
 
