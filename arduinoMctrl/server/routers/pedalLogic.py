@@ -17,12 +17,12 @@ try:
 except ImportError:
     PLATFORM = "WINDOWS"
     class MockGPIO:
-        BCM = "BCM"; OUT = "OUT"; IN = "IN"
+        BCM = "BCM"; OUT = "OUT"; IN = "IN"; PUD_UP = "PUD_UP"
         def setmode(self, m): pass
         def setwarnings(self, f): pass
-        def setup(self, p, m): pass
+        def setup(self, p, m, pull_up_down=None): pass
         def output(self, p, s): pass
-        def input(self, p): return 0
+        def input(self, p): return 1 # 기본 1 (안 눌림)
         def cleanup(self): print("GPIO Cleaned up")
         class PWM:
             def __init__(self, p, f): pass
@@ -35,10 +35,14 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="."), name="static")
 router = APIRouter(prefix="/ws")
 
-# ---- 2. 핀 설정 (27, 17 유지) ----
+# ---- 2. 핀 설정 ----
 PWM_A_PIN = 13; IN1_PIN = 23; IN2_PIN = 24
 PWM_B_PIN = 12; IN3_PIN = 5; IN4_PIN = 6
 TRIG_PIN = 27; ECHO_PIN = 17 
+
+# [추가] 해제용 푸시 버튼 (GPIO 21, 물리 40번)
+BUTTON_PIN = 21 
+
 SERIAL_PORT = '/dev/ttyUSB0'; BAUD_RATE = 115200
 
 # ---- 3. 임계값 설정 ----
@@ -46,7 +50,6 @@ PEDAL_TOTAL_ANGLE = 45.0
 CRITICAL_ANGULAR_VELOCITY = 420
 RAPID_PRESS_COUNT = 3      
 RAPID_PRESS_WINDOW = 2.0   
-SAFETY_LOCK_DURATION = 5.0
 SAFETY_SPEED = 15
 IDLE_SPEED = 15
 IDLE_TIMEOUT = 5.0
@@ -66,7 +69,7 @@ AUDIO_CARD_ID = get_usb_audio_id()
 current_duty = 0.0
 current_pedal_raw = 0
 current_safety_reason = None
-current_remaining_time = 0
+current_remaining_time = 0 # 이제 타이머 대신 상태 표시용으로 0/1 사용
 stop_threads = False
 
 dist_history = deque(maxlen=10) 
@@ -80,7 +83,7 @@ def play_siren_thread():
             os.system(f"amixer -c {AUDIO_CARD_ID} set PCM 40% > /dev/null 2>&1")
             
             sample_rate = 48000; beep_freq = 600
-            beep_duration = 0.3; silence_duration = 0.2; repeats = 4
+            beep_duration = 0.3; silence_duration = 0.2; repeats = 4 
             
             t_beep = np.linspace(0, beep_duration, int(sample_rate * beep_duration), endpoint=False)
             beep_wave = np.sign(np.sin(2 * np.pi * beep_freq * t_beep)).astype(np.float32)
@@ -119,7 +122,10 @@ def hardware_loop():
     GPIO.setmode(GPIO.BCM); GPIO.setwarnings(False)
     GPIO.setup(PWM_A_PIN, GPIO.OUT); GPIO.setup(IN1_PIN, GPIO.OUT); GPIO.setup(IN2_PIN, GPIO.OUT)
     GPIO.setup(PWM_B_PIN, GPIO.OUT); GPIO.setup(IN3_PIN, GPIO.OUT); GPIO.setup(IN4_PIN, GPIO.OUT)
-    if PLATFORM == "LINUX": GPIO.setup(TRIG_PIN, GPIO.OUT); GPIO.setup(ECHO_PIN, GPIO.IN)
+    if PLATFORM == "LINUX": 
+        GPIO.setup(TRIG_PIN, GPIO.OUT); GPIO.setup(ECHO_PIN, GPIO.IN)
+        # [추가] 버튼 핀 설정 (내부 풀업 저항 사용 -> 안누르면 1, 누르면 0)
+        GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
     pwm_a = GPIO.PWM(PWM_A_PIN, 1000); pwm_a.start(0)
     pwm_b = GPIO.PWM(PWM_B_PIN, 1000); pwm_b.start(0)
@@ -128,9 +134,13 @@ def hardware_loop():
     
     press_timestamps = deque()
     
-    override_end_time = 0; last_pedal_value = 0; last_time = time.time()
+    last_pedal_value = 0; last_time = time.time()
     prev_over_90 = False; last_pedal_active_time = time.time()
-    safety_lock_active = False; safety_cause_msg = ""
+    
+    # 안전 잠금 상태 변수 (타이머 방식 제거 -> 상태 유지 방식)
+    safety_lock_active = False 
+    safety_cause_msg = ""
+    
     prev_front_danger = False
 
     ser = None
@@ -162,11 +172,18 @@ def hardware_loop():
                 final_dist = 0.0
                 if len(dist_history) > 0: final_dist = sum(dist_history) / len(dist_history)
 
-                # 2. 안전 로직
+                # 2. 버튼 상태 확인 (누르면 Low(0), 안누르면 High(1))
+                # 윈도우 테스트용으로는 항상 안 눌림(1) 처리
+                if PLATFORM == "LINUX":
+                    is_btn_pressed = (GPIO.input(BUTTON_PIN) == 0)
+                else:
+                    is_btn_pressed = False 
+
+                # 3. 안전 로직
                 trigger_safety = False
                 detected_reason = ""
                 
-                # [전방 장애물]
+                # [A] 전방 장애물 감지 (최우선 순위, 버튼으로 해제 불가)
                 front_danger = False
                 if final_dist > 0 and final_dist <= COLLISION_DIST_LIMIT and current_pedal_value > 0:
                     front_danger = True
@@ -180,20 +197,8 @@ def hardware_loop():
                 else:
                     if prev_front_danger: current_safety_reason = None
                     
-                    if safety_lock_active:
-                        remaining = override_end_time - current_time
-                        current_remaining_time = max(0, int(remaining))
-                        if remaining > 0:
-                            current_safety_reason = f"{safety_cause_msg}\n(해제까지 {current_remaining_time}초)"
-                            target_speed = SAFETY_SPEED
-                        else:
-                            if current_pedal_value > 0:
-                                current_safety_reason = "⚠️ 엑셀에서 발을 떼세요!"
-                                target_speed = SAFETY_SPEED
-                            else:
-                                safety_lock_active = False; current_safety_reason = None
-                                current_remaining_time = 0; target_speed = 0
-                    else:
+                    # [B] 급발진/과속 감지 로직
+                    if not safety_lock_active:
                         dt = current_time - last_time
                         if dt > 0:
                             delta_percent = current_pedal_value - last_pedal_value
@@ -201,32 +206,55 @@ def hardware_loop():
                             angular_velocity = delta_angle / dt
                             current_angular_velocity = angular_velocity
                             
-                            # [수정됨] abs() 제거 -> 양수(밟을 때)만 체크
+                            # 양수 각속도(밟을 때)만 체크
                             if angular_velocity >= CRITICAL_ANGULAR_VELOCITY:
                                 trigger_safety = True; detected_reason = "⚠️ 급발진 감지!"
                             
                             is_over_90 = (current_pedal_value >= 90)
                             if is_over_90 and not prev_over_90: press_timestamps.append(current_time)
-                            
                             while press_timestamps and press_timestamps[0] < current_time - RAPID_PRESS_WINDOW:
                                 press_timestamps.popleft()
-                                
                             if len(press_timestamps) >= RAPID_PRESS_COUNT:
                                 trigger_safety = True; detected_reason = "🚫 과속 페달 연타!"; press_timestamps.clear()
                             prev_over_90 = is_over_90
 
                         if trigger_safety:
-                            safety_lock_active = True; safety_cause_msg = detected_reason
-                            override_end_time = current_time + SAFETY_LOCK_DURATION
-                            target_speed = SAFETY_SPEED; current_remaining_time = int(SAFETY_LOCK_DURATION)
+                            safety_lock_active = True
+                            safety_cause_msg = detected_reason
                             play_siren_thread()
-                        else:
-                            if current_pedal_value > 0:
-                                last_pedal_active_time = current_time
-                                target_speed = max(current_pedal_value, IDLE_SPEED)
+                    
+                    # [C] 안전 잠금 상태 처리 및 해제 로직
+                    if safety_lock_active:
+                        target_speed = SAFETY_SPEED
+                        current_remaining_time = 999 # 잠김 상태 표시용 (타이머 아님)
+                        
+                        # -- 해제 조건 및 메시지 분기 --
+                        if current_pedal_value > 0:
+                            if is_btn_pressed:
+                                # 1. 엑셀 밟음 + 버튼 누름
+                                current_safety_reason = "⚠️ 엑셀에서 발을 떼세요!"
                             else:
-                                if (current_time - last_pedal_active_time) >= IDLE_TIMEOUT: target_speed = 0
-                                else: target_speed = IDLE_SPEED
+                                # 2. 엑셀 밟음 + 버튼 안 누름
+                                current_safety_reason = f"{safety_cause_msg}\n스위치를 누르고 엑셀에서 발을 떼세요"
+                        else:
+                            if is_btn_pressed:
+                                # 3. 엑셀 뗌 + 버튼 누름 -> [해제 성공]
+                                safety_lock_active = False
+                                current_safety_reason = None
+                                current_remaining_time = 0
+                                target_speed = 0
+                            else:
+                                # 4. 엑셀 뗌 + 버튼 안 누름
+                                current_safety_reason = "🔵 푸쉬버튼을 눌러 제한을 해제하세요"
+                                
+                    else:
+                        # 정상 주행
+                        if current_pedal_value > 0:
+                            last_pedal_active_time = current_time
+                            target_speed = max(current_pedal_value, IDLE_SPEED)
+                        else:
+                            if (current_time - last_pedal_active_time) >= IDLE_TIMEOUT: target_speed = 0
+                            else: target_speed = IDLE_SPEED
                 
                 prev_front_danger = front_danger
 
