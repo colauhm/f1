@@ -113,12 +113,10 @@ def read_distance():
         else: return None
     except: return None
 
-# ... (이전 import 및 설정 코드 동일)
-
-# ---- 하드웨어 루프 ----
 def hardware_loop():
     global current_duty, current_pedal_raw, current_safety_reason, current_remaining_time, stop_threads
     
+    # 1. GPIO 초기화
     GPIO.setmode(GPIO.BCM); GPIO.setwarnings(False)
     GPIO.setup(PWM_A_PIN, GPIO.OUT); GPIO.setup(IN1_PIN, GPIO.OUT); GPIO.setup(IN2_PIN, GPIO.OUT)
     GPIO.setup(PWM_B_PIN, GPIO.OUT); GPIO.setup(IN3_PIN, GPIO.OUT); GPIO.setup(IN4_PIN, GPIO.OUT)
@@ -126,11 +124,13 @@ def hardware_loop():
         GPIO.setup(TRIG_PIN, GPIO.OUT); GPIO.setup(ECHO_PIN, GPIO.IN)
         GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
+    # 2. PWM 시작
     pwm_a = GPIO.PWM(PWM_A_PIN, 1000); pwm_a.start(0)
     pwm_b = GPIO.PWM(PWM_B_PIN, 1000); pwm_b.start(0)
     GPIO.output(IN1_PIN, True); GPIO.output(IN2_PIN, False)
     GPIO.output(IN3_PIN, True); GPIO.output(IN4_PIN, False)
     
+    # 3. 변수 초기화
     press_timestamps = deque()
     
     last_pedal_value = 0; last_time = time.time()
@@ -138,9 +138,9 @@ def hardware_loop():
     safety_lock_active = False; safety_cause_msg = ""
     prev_front_danger = False
 
-    # [변수] 메시지 유지 타이머
-    safety_msg_expiry = 0.0
-    last_transient_msg = None
+    # [수정됨] 메시지 우선순위 제어를 위한 변수
+    safety_msg_expiry = 0.0     # 원인 경고가 유지될 만료 시간
+    last_transient_msg = None   # 유지할 원인 경고 메시지 ("급발진!" 등)
 
     ser = None
     if PLATFORM == "LINUX":
@@ -149,10 +149,12 @@ def hardware_loop():
 
     try:
         while not stop_threads:
+            # 시리얼 재연결 시도
             if ser is None and PLATFORM == "LINUX":
                 try: ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1); ser.flush()
                 except: time.sleep(1); continue
             
+            # 시리얼 데이터 읽기 (최신 값만 취함)
             raw_line = ""
             if ser and ser.in_waiting > 0:
                 try:
@@ -175,20 +177,20 @@ def hardware_loop():
                 final_dist = 0.0
                 if len(dist_history) > 0: final_dist = sum(dist_history) / len(dist_history)
 
-                # 2. 버튼
+                # 2. 버튼 입력
                 is_btn_pressed = False
                 if PLATFORM == "LINUX":
                     is_btn_pressed = (GPIO.input(BUTTON_PIN) == 0)
 
-                # 3. 안전 로직 판단
+                # 3. 로직 판단 시작
                 trigger_safety = False
-                frame_reason = None  # 이번 프레임의 즉각적인 경고 원인
+                frame_reason = None  # 이번 프레임의 '상태' 메시지 ("발을 떼세요", "전방주의" 등)
                 
                 front_danger = False
                 if final_dist > 0 and final_dist <= COLLISION_DIST_LIMIT and current_pedal_value > 0:
                     front_danger = True
 
-                # [우선순위 1] 잠금 상태 (즉시 표시 - 유지 안 함)
+                # [상태 1] 잠금 모드 (Lock Active)
                 if safety_lock_active:
                     target_speed = SAFETY_SPEED
                     current_remaining_time = 999 
@@ -197,22 +199,24 @@ def hardware_loop():
                         frame_reason = "⚠️ 엑셀에서 발을 먼저 떼세요!"
                     else:
                         if is_btn_pressed:
+                            # 잠금 해제
                             safety_lock_active = False
                             frame_reason = None
                             current_remaining_time = 0
                             target_speed = 0
-                            safety_msg_expiry = 0 # 잠금 해제 시 기존 경고도 클리어
+                            # 해제 시 기존 경고 타이머도 초기화
+                            safety_msg_expiry = 0 
                         else:
                             frame_reason = "🔵 푸쉬버튼을 눌러 제한을 해제하세요"
 
-                # [우선순위 2] 전방 장애물 (즉시 표시 - 유지 안 함)
+                # [상태 2] 전방 장애물 위험
                 elif front_danger:
                     frame_reason = "⚠️ 전방을 주의하세요!"
                     current_remaining_time = 0
                     target_speed = 0
                     if not prev_front_danger: play_siren_thread()
                 
-                # [우선순위 3] 이벤트 경고 (급발진/연타) -> 5초 유지 대상
+                # [상태 3] 주행 중 이벤트 감지 (급발진/연타)
                 else:
                     dt = current_time - last_time
                     if dt > 0:
@@ -224,10 +228,10 @@ def hardware_loop():
                         # (A) 급발진 감지
                         if angular_velocity >= CRITICAL_ANGULAR_VELOCITY:
                             trigger_safety = True
-                            frame_reason = "⚠️ 급발진 감지!"
-                            # [수정됨] 5초 유지 타이머 설정
+                            event_msg = "⚠️ 급발진 감지!"
+                            # [핵심] 5초간 우선 표시 타이머 설정
                             safety_msg_expiry = current_time + 5.0
-                            last_transient_msg = frame_reason
+                            last_transient_msg = event_msg
                         
                         # (B) 페달 연타 감지
                         is_over_90 = (current_pedal_value >= 90)
@@ -237,18 +241,18 @@ def hardware_loop():
                         
                         if len(press_timestamps) >= RAPID_PRESS_COUNT:
                             trigger_safety = True
-                            frame_reason = "🚫 과속 페달 연타!"
+                            event_msg = "🚫 과속 페달 연타!"
                             press_timestamps.clear()
-                            # [수정됨] 5초 유지 타이머 설정
+                            # [핵심] 5초간 우선 표시 타이머 설정
                             safety_msg_expiry = current_time + 5.0
-                            last_transient_msg = frame_reason
+                            last_transient_msg = event_msg
                             
                         prev_over_90 = is_over_90
 
                     if trigger_safety:
                         safety_lock_active = True
-                        safety_cause_msg = frame_reason
                         play_siren_thread()
+                        # frame_reason은 설정하지 않음 (아래 우선순위 로직에서 last_transient_msg가 처리함)
                     else:
                         if current_pedal_value > 0:
                             last_pedal_active_time = current_time
@@ -259,18 +263,19 @@ def hardware_loop():
                 
                 prev_front_danger = front_danger
 
-                # ---- [최종 메시지 결정 로직] ----
-                # 1. 현재(이번 프레임)에 발생한 중요 경고(잠금, 장애물 등)가 있으면 우선 표시
-                if frame_reason is not None:
-                    current_safety_reason = frame_reason
-                # 2. 현재 경고가 없고, 타이머가 살아있으면 '마지막 이벤트 경고'를 5초간 유지
-                elif current_time < safety_msg_expiry and last_transient_msg is not None:
+                # ==========================================================
+                # [최종 메시지 우선순위 결정]
+                # 1. 중요 이벤트(급발진 등) 타이머가 살아있으면 무조건 최우선 표시
+                # 2. 타이머가 끝났으면 현재 상태(발 떼세요, 전방주의 등) 표시
+                # ==========================================================
+                if current_time < safety_msg_expiry and last_transient_msg is not None:
                     current_safety_reason = last_transient_msg
-                # 3. 아무것도 없으면 끔
+                elif frame_reason is not None:
+                    current_safety_reason = frame_reason
                 else:
                     current_safety_reason = None
-                # -----------------------------
-
+                
+                # 모터 제어 및 데이터 전송
                 pwm_a.ChangeDutyCycle(target_speed)
                 pwm_b.ChangeDutyCycle(target_speed)
                 current_duty = target_speed
@@ -292,8 +297,6 @@ def hardware_loop():
     finally:
         pwm_a.stop(); pwm_b.stop(); GPIO.cleanup()
         if ser and ser.is_open: ser.close()
-
-# ... (이후 코드 동일)
 
 def start_hardware():
     t = threading.Thread(target=hardware_loop, daemon=True)
