@@ -137,6 +137,10 @@ def hardware_loop():
     unlock_btn_latched = False
     prev_front_danger = False
 
+    # [추가된 변수] 메시지 유지를 위한 타이머와 캐시
+    safety_msg_expiry = 0.0
+    last_known_reason = None
+
     ser = None
     if PLATFORM == "LINUX":
         try: ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1); ser.flush()
@@ -148,16 +152,13 @@ def hardware_loop():
                 try: ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1); ser.flush()
                 except: time.sleep(1); continue
             
-            # [최적화 핵심] 쌓여있는 시리얼 데이터를 모두 읽어서 버리고, 가장 마지막(최신) 값만 가져옴
             raw_line = ""
             if ser and ser.in_waiting > 0:
                 try:
-                    # 버퍼에 있는 모든 내용을 읽어옴
                     lines = ser.read_all().decode('utf-8').split('\n')
-                    # 빈 문자열 제외하고 가장 마지막 유효한 데이터 선택
                     valid_lines = [l.strip() for l in lines if l.strip().isdigit()]
                     if valid_lines:
-                        raw_line = valid_lines[-1] # 가장 최신 값
+                        raw_line = valid_lines[-1]
                 except: pass
             
             if raw_line.isdigit():
@@ -246,6 +247,17 @@ def hardware_loop():
                 
                 prev_front_danger = front_danger
 
+                # ---- [핵심 수정] 메시지 2초 유지 로직 시작 ----
+                if current_safety_reason is not None:
+                    # 현재 경고가 있다면 타이머 갱신 (지금부터 2초 뒤까지 유지)
+                    safety_msg_expiry = current_time + 2.0
+                    last_known_reason = current_safety_reason
+                else:
+                    # 현재 경고가 없더라도(None), 유효기간(2초)이 안 지났으면 마지막 메시지 보여줌
+                    if current_time < safety_msg_expiry and last_known_reason is not None:
+                        current_safety_reason = last_known_reason
+                # -------------------------------------------
+
                 pwm_a.ChangeDutyCycle(target_speed)
                 pwm_b.ChangeDutyCycle(target_speed)
                 current_duty = target_speed
@@ -261,14 +273,13 @@ def hardware_loop():
                     "pc": len(press_timestamps)
                 })
             
-            # [복구] 다시 0.01초로 빠르게 설정 (반응속도 향상)
             time.sleep(0.01)
 
     except Exception as e: print(e)
     finally:
         pwm_a.stop(); pwm_b.stop(); GPIO.cleanup()
         if ser and ser.is_open: ser.close()
-
+        
 def start_hardware():
     t = threading.Thread(target=hardware_loop, daemon=True)
     t.start()
