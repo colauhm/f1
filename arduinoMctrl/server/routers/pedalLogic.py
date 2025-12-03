@@ -44,7 +44,7 @@ BUTTON_PIN = 21
 
 SERIAL_PORT = '/dev/ttyUSB0'; BAUD_RATE = 115200
 
-# ---- 3. 임계값 및 감속 설정 (튜닝 포인트) ----
+# ---- 3. 임계값 설정 ----
 PEDAL_TOTAL_ANGLE = 45.0
 CRITICAL_ANGULAR_VELOCITY = 420
 RAPID_PRESS_COUNT = 3      
@@ -54,14 +54,18 @@ IDLE_SPEED = 20
 IDLE_TIMEOUT = 5.0
 COLLISION_DIST_LIMIT = 100.0 
 
-# [NEW] 가감속 부드러움 설정 (0.01초마다 변하는 양)
-# 값이 클수록 반응이 빠르고, 작을수록 부드럽게(느리게) 변함
-ACCEL_STEP = 5.0   # 가속 시: 0에서 100까지 약 0.2초 (빠른 반응)
-DECEL_STEP = 0.5   # 감속 시: 100에서 0까지 약 2.0초 (관성 주행 느낌)
+# [핵심 수정] 가속/감속 부드러움 설정 (0.01초마다 변하는 양)
+# 1. 밟을 때 (가속): 적당히 빠르지만 부드럽게
+#    값 1.5 기준: 0->100%까지 약 0.7초 소요 (부드러운 출발)
+ACCEL_STEP = 1.5   
+
+# 2. 뗄 때 (감속): 밟을 때보다 느리게 (관성 주행)
+#    값 0.5 기준: 100->0%까지 약 2.0초 소요 (천천히 멈춤)
+DECEL_STEP = 0.5   
 
 # ---- 전역 변수 ----
-current_duty = 0.0          # 실제 모터에 들어가는 값 (스무딩 적용됨)
-target_duty_raw = 0.0       # 로직이 계산한 목표 값 (스무딩 전)
+current_duty = 0.0          # 실제 모터 출력값 (스무딩 적용됨)
+target_duty_raw = 0.0       # 로직상 목표값
 current_pedal_raw = 0
 current_safety_reason = None
 current_remaining_time = 0
@@ -168,7 +172,6 @@ def process_safety_logic(
     lock_active, msg_expiry, last_transient_msg,
     press_timestamps, prev_over_90, prev_front_danger, last_pedal_active_time
 ):
-    # 로직 내부에서는 '목표값(Target)'만 결정함 (스무딩 전)
     target_speed = 0; trigger_siren = False; frame_reason = None
     current_angular_velocity = 0.0
     
@@ -177,7 +180,7 @@ def process_safety_logic(
         front_danger = True
 
     if lock_active:
-        target_speed = SAFETY_SPEED # 제한 걸리면 목표는 20%
+        target_speed = SAFETY_SPEED 
         if current_pedal > 0: frame_reason = "⚠️ 엑셀에서 발을 먼저 떼세요!"
         else:
             if is_btn_pressed:
@@ -187,7 +190,7 @@ def process_safety_logic(
 
     elif front_danger:
         frame_reason = "⚠️ 전방을 주의하세요!"
-        target_speed = 0 # 위험하면 목표는 0%
+        target_speed = 0 
         if not prev_front_danger: trigger_siren = True
 
     else:
@@ -213,17 +216,14 @@ def process_safety_logic(
             if trigger_event:
                 lock_active = True; trigger_siren = True
                 msg_expiry = current_time + 5.0; last_transient_msg = event_msg
-                target_speed = SAFETY_SPEED # 급발진 감지 시 목표 20%
+                target_speed = SAFETY_SPEED
             else:
                 if current_pedal > 0:
                     last_pedal_active_time = current_time
                     target_speed = max(current_pedal, IDLE_SPEED)
                 else:
-                    # [수정] 페달을 떼도 IDLE_TIMEOUT 동안은 최소속도 유지하다가 꺼짐
-                    if (current_time - last_pedal_active_time) >= IDLE_TIMEOUT: 
-                        target_speed = 0
-                    else: 
-                        target_speed = 0 # 여기를 0으로 둬야 감속 로직을 통해 서서히 줄어듦
+                    if (current_time - last_pedal_active_time) >= IDLE_TIMEOUT: target_speed = 0
+                    else: target_speed = 0 # 0으로 설정하면 감속 로직에 의해 서서히 줄어듦
 
     logical_reason = None
     if current_time < msg_expiry and last_transient_msg is not None:
@@ -265,7 +265,7 @@ def hardware_loop():
         try: ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1); ser.flush()
         except: pass
 
-    # 실제 출력되는 값 (스무딩 적용용 변수)
+    # [중요] 스무딩을 위한 현재 모터 상태 변수
     smoothed_duty = 0.0
 
     try:
@@ -303,25 +303,23 @@ def hardware_loop():
                     press_timestamps, state["prev_over_90"], state["prev_front_danger"], state["last_pedal_active_time"]
                 )
                 
-                # 1. 로직에서 목표 속도(Raw Target)를 받아옴
                 target_raw = float(result["target_speed"])
-                target_duty_raw = target_raw # 디버깅용 저장
+                target_duty_raw = target_raw
                 
-                # 2. [핵심] 스무딩(감속/가속) 처리
-                # 목표가 현재보다 크면 가속(ACCEL_STEP), 작으면 감속(DECEL_STEP)
+                # [핵심 로직] 목표값까지 부드럽게 이동 (가속/감속 속도 다르게)
                 if target_raw > smoothed_duty:
+                    # 가속: ACCEL_STEP 만큼 증가 (빠름)
                     smoothed_duty += ACCEL_STEP
                     if smoothed_duty > target_raw: smoothed_duty = target_raw
                 elif target_raw < smoothed_duty:
+                    # 감속: DECEL_STEP 만큼 감소 (느림, 관성 효과)
                     smoothed_duty -= DECEL_STEP
                     if smoothed_duty < target_raw: smoothed_duty = target_raw
                 
-                # 3. 최종 모터 적용
-                current_duty = smoothed_duty # 전역 변수 업데이트
+                current_duty = smoothed_duty
                 pwm_a.ChangeDutyCycle(smoothed_duty)
                 pwm_b.ChangeDutyCycle(smoothed_duty)
 
-                # --- 이유 및 오디오 처리 ---
                 new_reason = result["logical_reason"]
                 should_speak = False
                 if new_reason is not None:
@@ -353,7 +351,6 @@ def hardware_loop():
 
                 last_pedal_value = current_pedal_value; last_time = current_time
             
-            # 루프 주기 0.01초
             time.sleep(0.01)
 
     except Exception as e: print(e)
