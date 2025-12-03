@@ -20,7 +20,7 @@ const THRESHOLD_COUNT = 3;
 const COLOR_GREEN = "#39ff14";
 const COLOR_RED = "#ff0000";
 
-const TIRE_CIRCUM = 2.0; 
+const TIRE_CIRCUM = 1.0; 
 
 let pedalBuffer = [], motorBuffer = [], velocityBuffer = [], distanceBuffer = [];
 const MAX_STORE_MINUTES = 1.5; 
