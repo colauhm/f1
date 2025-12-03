@@ -184,8 +184,9 @@ def process_safety_logic(
     target_speed = 0; frame_reason = None
     current_angular_velocity = 0.0
     trigger_sound = False
+    visual_gear = current_drive_mode # 기본값
     
-    # [1] Park(P)
+    # [1] Park(P) - 최우선, 로직 중단
     if current_drive_mode == 'P':
         return {
             "target_speed": 0, "logical_reason": None,
@@ -195,25 +196,8 @@ def process_safety_logic(
             "last_pedal_active_time": current_time, "visual_gear": "P"
         }
     
-    # [2] Neutral(N)
-    if current_drive_mode == 'N':
-        return {
-            "target_speed": 0, "logical_reason": None,
-            "trigger_sound": False, "angular_velocity": 0,
-            "lock_active": False, "pedal_error_expiry": 0,
-            "prev_over_90": False, "prev_front_danger": False,
-            "last_pedal_active_time": current_time, "visual_gear": "N"
-        }
-
-    # [3] Drive(D)
-    visual_gear = "D" 
-    front_danger = False
-    
-    # 전방 감지
-    if final_dist > 0 and final_dist <= COLLISION_DIST_LIMIT and current_pedal > 0:
-        front_danger = True
-
-    # ---- [중요] 안전 제한(Lock) 로직 ----
+    # [2] 안전 제한 (Lock Active) - [수정] N체크보다 먼저 와야 함!
+    # Lock이 걸리면 기어가 N으로 바뀌더라도 경고창은 유지되어야 함
     if lock_active:
         target_speed = SAFETY_SPEED 
         visual_gear = "N" # 화면엔 N으로 표시
@@ -235,14 +219,40 @@ def process_safety_logic(
                     trigger_sound = False # 소리 끔
                 else:
                     frame_reason = "🔵 해제버튼(21번)을 누르세요"
+
+        # Lock 상태일 때는 아래 N모드나 D모드 로직을 타지 않고 바로 리턴
+        return {
+            "target_speed": target_speed, "logical_reason": frame_reason,
+            "trigger_sound": trigger_sound,
+            "angular_velocity": current_angular_velocity,
+            "lock_active": lock_active, "pedal_error_expiry": pedal_error_expiry,
+            "prev_over_90": prev_over_90,
+            "prev_front_danger": prev_front_danger, "last_pedal_active_time": last_pedal_active_time,
+            "visual_gear": visual_gear
+        }
     
-    # 위험 감지 (충돌)
-    elif front_danger:
+    # [3] Neutral(N) - Lock이 아닐 때만 유효
+    if current_drive_mode == 'N':
+        return {
+            "target_speed": 0, "logical_reason": None,
+            "trigger_sound": False, "angular_velocity": 0,
+            "lock_active": False, "pedal_error_expiry": 0,
+            "prev_over_90": False, "prev_front_danger": False,
+            "last_pedal_active_time": current_time, "visual_gear": "N"
+        }
+
+    # [4] Drive(D) - 정상 주행
+    visual_gear = "D" 
+    front_danger = False
+    
+    # 전방 감지
+    if final_dist > 0 and final_dist <= COLLISION_DIST_LIMIT and current_pedal > 0:
+        front_danger = True
+
+    if front_danger:
         frame_reason = "⚠️ 전방을 주의하세요!"
         target_speed = 0
         trigger_sound = True 
-
-    # 정상 주행 중 감지 (급발진/과속)
     else:
         dt = current_time - last_time
         if dt > 0:
@@ -334,7 +344,6 @@ def hardware_loop():
     
     press_timestamps = deque(); last_pedal_value = 0; last_time = time.time()
     
-    # [수정] last_transient_msg 제거, pedal_error_expiry 유지
     state = { 
         "lock_active": False, 
         "pedal_error_expiry": 0.0,
@@ -382,7 +391,6 @@ def hardware_loop():
             is_btn_pressed = False
             if PLATFORM == "LINUX": is_btn_pressed = (GPIO.input(BUTTON_PIN) == 0)
 
-            # [수정] 인자 개수 13개로 맞춤 (None 제거)
             result = process_safety_logic(
                 current_time, current_pedal_raw, last_pedal_value, last_time,
                 final_dist, is_btn_pressed,
@@ -391,7 +399,8 @@ def hardware_loop():
                 drive_mode 
             )
             
-            # 잠금 상태 반영
+            # [잠금 상태 반영]
+            # 안전 제한 걸리면 Drive 모드여도 화면엔 N으로 표시
             if result["lock_active"] and drive_mode == 'D':
                 drive_mode = 'N'
 
