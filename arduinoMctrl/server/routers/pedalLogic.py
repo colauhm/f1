@@ -9,7 +9,6 @@ from fastapi.staticfiles import StaticFiles
 import os
 import numpy as np
 import wave
-import sounddevice as sd
 
 # ---- 1. 하드웨어 설정 ----
 try:
@@ -54,21 +53,6 @@ IDLE_SPEED = 20
 IDLE_TIMEOUT = 5.0
 COLLISION_DIST_LIMIT = 100.0 
 
-# ---- [수정됨] 오디오 카드 ID 찾기 ----
-def get_audio_card_id():
-    """USB 오디오 카드의 인덱스 번호를 찾는다."""
-    try:
-        devices = sd.query_devices()
-        for i, dev in enumerate(devices):
-            if 'USB' in dev['name'] and dev['max_output_channels'] > 0:
-                return i
-        return 1 # 기본값
-    except:
-        return 1
-
-AUDIO_CARD_ID = get_audio_card_id()
-print(f"Detected Audio Card ID: {AUDIO_CARD_ID}")
-
 # ---- 전역 변수 ----
 current_duty = 0.0
 current_pedal_raw = 0
@@ -84,6 +68,7 @@ audio_queue = queue.Queue()
 # ---- 사이렌 WAV 파일 생성 ----
 def generate_siren_file(filename="/tmp/siren.wav"):
     try:
+        # 표준 44100Hz 사용
         sample_rate = 44100
         duration = 1.5 
         freq = 600
@@ -96,45 +81,45 @@ def generate_siren_file(filename="/tmp/siren.wav"):
         with wave.open(filename, 'w') as wf:
             wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(sample_rate)
             wf.writeframes(wave_data.tobytes())
+        print("Siren WAV generated.")
     except Exception as e:
         print(f"Siren Gen Error: {e}")
 
+# 시작 시 파일 생성
 generate_siren_file()
 
 # =========================================================
-# [최종 수정] 오디오 처리 스레드 (순수 명령어 방식)
+# [최종 수정] 오디오 처리 스레드 (단순화 버전)
 # =========================================================
 def audio_processing_thread():
     global is_audio_busy
     
-    # pyttsx3 라이브러리 초기화 제거 (충돌 원인 삭제)
-
     while not stop_threads:
         try:
             task = audio_queue.get(timeout=1)
             is_audio_busy = True
             
-            # 1. 사이렌 재생 (aplay)
+            # 1. 사이렌 재생
             if task.get("siren", False):
                 try:
-                    # -D plughw:{ID},0 옵션으로 강제 출력
-                    cmd = f"aplay -q -D plughw:{AUDIO_CARD_ID},0 /tmp/siren.wav"
-                    os.system(cmd)
-                    time.sleep(0.2)
+                    # [핵심 변경] -D plughw... 옵션 삭제! 시스템 기본 장치 사용
+                    # -q: 로그 출력 끄기
+                    os.system("aplay -q /tmp/siren.wav")
+                    time.sleep(0.1)
                 except Exception as e:
                     print(f"Siren Cmd Error: {e}")
 
-            # 2. TTS 말하기 (espeak -> aplay 파이프 연결)
+            # 2. TTS 말하기
             msg = task.get("msg", "")
             if msg:
                 clean_msg = msg.replace("⚠️", "").replace("🚫", "").replace("🔵", "").strip()
                 if clean_msg:
                     try:
-                        # [핵심] espeak의 출력을 aplay로 넘겨서 USB 스피커로 강제 출력
-                        # -v ko: 한국어, -s 160: 속도, --stdout: 소리를 데이터로 출력
-                        tts_cmd = f"espeak -v ko -s 160 '{clean_msg}' --stdout | aplay -q -D plughw:{AUDIO_CARD_ID},0"
+                        # [핵심 변경] -D plughw... 삭제
+                        # espeak 결과를 바로 aplay로 넘김 (OS가 알아서 믹싱함)
+                        tts_cmd = f"espeak -v ko -s 160 '{clean_msg}' --stdout | aplay -q"
                         os.system(tts_cmd)
-                        time.sleep(0.2)
+                        time.sleep(0.1)
                     except Exception as e:
                         print(f"TTS Cmd Error: {e}")
 
