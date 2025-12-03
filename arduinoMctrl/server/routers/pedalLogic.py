@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 import os
 import numpy as np
 import wave
-import subprocess # [추가] 외부 명령어 실행 및 결과 확인용
+import subprocess
 
 # ---- 1. 하드웨어 설정 ----
 try:
@@ -44,7 +44,7 @@ BUTTON_PIN = 21
 
 SERIAL_PORT = '/dev/ttyUSB0'; BAUD_RATE = 115200
 
-# ---- 3. 임계값 설정 ----
+# ---- 3. 임계값 및 감속 설정 (튜닝 포인트) ----
 PEDAL_TOTAL_ANGLE = 45.0
 CRITICAL_ANGULAR_VELOCITY = 420
 RAPID_PRESS_COUNT = 3      
@@ -54,8 +54,14 @@ IDLE_SPEED = 20
 IDLE_TIMEOUT = 5.0
 COLLISION_DIST_LIMIT = 100.0 
 
+# [NEW] 가감속 부드러움 설정 (0.01초마다 변하는 양)
+# 값이 클수록 반응이 빠르고, 작을수록 부드럽게(느리게) 변함
+ACCEL_STEP = 5.0   # 가속 시: 0에서 100까지 약 0.2초 (빠른 반응)
+DECEL_STEP = 0.5   # 감속 시: 100에서 0까지 약 2.0초 (관성 주행 느낌)
+
 # ---- 전역 변수 ----
-current_duty = 0.0
+current_duty = 0.0          # 실제 모터에 들어가는 값 (스무딩 적용됨)
+target_duty_raw = 0.0       # 로직이 계산한 목표 값 (스무딩 전)
 current_pedal_raw = 0
 current_safety_reason = None
 current_remaining_time = 0
@@ -66,29 +72,24 @@ dist_history = deque(maxlen=10)
 data_queue = queue.Queue()
 audio_queue = queue.Queue()
 
-# ---- [핵심] USB 오디오 카드 번호 찾기 (자동) ----
+# ---- USB 오디오 카드 찾기 ----
 def get_usb_card_number():
-    """aplay -l 명령어를 분석해서 USB Audio의 카드 번호를 찾음"""
     try:
-        # aplay -l 실행 결과 가져오기
         result = subprocess.check_output("aplay -l", shell=True).decode()
         for line in result.split('\n'):
             if "USB" in line and "card" in line:
-                # 예: card 1: Device ... -> '1' 추출
                 parts = line.split(":")
-                card_part = parts[0] # card 1
+                card_part = parts[0] 
                 card_num = card_part.replace("card", "").strip()
                 return card_num
-        return None # 못 찾으면 None
+        return None 
     except:
         return None
 
-# 시작 시 카드 번호 탐색
 USB_CARD_NUM = get_usb_card_number()
 print(f"Detected USB Card Number: {USB_CARD_NUM}")
 
-
-# ---- 사이렌 WAV 파일 생성 ----
+# ---- 사이렌 파일 생성 ----
 def generate_siren_file(filename="/tmp/siren.wav"):
     try:
         sample_rate = 44100
@@ -99,7 +100,6 @@ def generate_siren_file(filename="/tmp/siren.wav"):
         mask = (t % 0.3) < 0.15
         wave_data = wave_data * mask
         wave_data = (wave_data * 32767).astype(np.int16)
-        
         with wave.open(filename, 'w') as wf:
             wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(sample_rate)
             wf.writeframes(wave_data.tobytes())
@@ -108,53 +108,36 @@ def generate_siren_file(filename="/tmp/siren.wav"):
 
 generate_siren_file()
 
-# =========================================================
-# [최종 수정] 오디오 처리 스레드 (자동 카드 감지 적용)
-# =========================================================
+# ---- 오디오 스레드 ----
 def audio_processing_thread():
     global is_audio_busy, USB_CARD_NUM
-    
     while not stop_threads:
         try:
             task = audio_queue.get(timeout=1)
             is_audio_busy = True
-            
-            # USB 카드가 감지되었으면 강제 지정, 아니면 기본값(default) 사용
             device_flag = ""
             if USB_CARD_NUM is not None:
-                # plughw:X,0 형태로 강제 지정
                 device_flag = f"-D plughw:{USB_CARD_NUM},0"
 
-            # 1. 사이렌 재생
             if task.get("siren", False):
                 try:
-                    cmd = f"aplay -q {device_flag} /tmp/siren.wav"
-                    os.system(cmd)
+                    os.system(f"aplay -q {device_flag} /tmp/siren.wav")
                     time.sleep(0.1)
-                except Exception as e:
-                    print(f"Siren Cmd Error: {e}")
+                except: pass
 
-            # 2. TTS 말하기
             msg = task.get("msg", "")
             if msg:
                 clean_msg = msg.replace("⚠️", "").replace("🚫", "").replace("🔵", "").strip()
                 if clean_msg:
                     try:
-                        # espeak -> aplay
-                        tts_cmd = f"espeak -v ko -s 160 '{clean_msg}' --stdout | aplay -q {device_flag}"
-                        os.system(tts_cmd)
+                        os.system(f"espeak -v ko -s 160 '{clean_msg}' --stdout | aplay -q {device_flag}")
                         time.sleep(0.1)
-                    except Exception as e:
-                        print(f"TTS Cmd Error: {e}")
+                    except: pass
 
             is_audio_busy = False
             audio_queue.task_done()
-
-        except queue.Empty:
-            pass
-        except Exception as e:
-            print(f"Audio Thread Error: {e}")
-            is_audio_busy = False
+        except queue.Empty: pass
+        except Exception: is_audio_busy = False
 
 # ---- 거리 측정 ----
 def read_distance():
@@ -185,6 +168,7 @@ def process_safety_logic(
     lock_active, msg_expiry, last_transient_msg,
     press_timestamps, prev_over_90, prev_front_danger, last_pedal_active_time
 ):
+    # 로직 내부에서는 '목표값(Target)'만 결정함 (스무딩 전)
     target_speed = 0; trigger_siren = False; frame_reason = None
     current_angular_velocity = 0.0
     
@@ -193,7 +177,7 @@ def process_safety_logic(
         front_danger = True
 
     if lock_active:
-        target_speed = SAFETY_SPEED
+        target_speed = SAFETY_SPEED # 제한 걸리면 목표는 20%
         if current_pedal > 0: frame_reason = "⚠️ 엑셀에서 발을 먼저 떼세요!"
         else:
             if is_btn_pressed:
@@ -203,7 +187,7 @@ def process_safety_logic(
 
     elif front_danger:
         frame_reason = "⚠️ 전방을 주의하세요!"
-        target_speed = 0
+        target_speed = 0 # 위험하면 목표는 0%
         if not prev_front_danger: trigger_siren = True
 
     else:
@@ -229,13 +213,17 @@ def process_safety_logic(
             if trigger_event:
                 lock_active = True; trigger_siren = True
                 msg_expiry = current_time + 5.0; last_transient_msg = event_msg
+                target_speed = SAFETY_SPEED # 급발진 감지 시 목표 20%
             else:
                 if current_pedal > 0:
                     last_pedal_active_time = current_time
                     target_speed = max(current_pedal, IDLE_SPEED)
                 else:
-                    if (current_time - last_pedal_active_time) >= IDLE_TIMEOUT: target_speed = 0
-                    else: target_speed = IDLE_SPEED
+                    # [수정] 페달을 떼도 IDLE_TIMEOUT 동안은 최소속도 유지하다가 꺼짐
+                    if (current_time - last_pedal_active_time) >= IDLE_TIMEOUT: 
+                        target_speed = 0
+                    else: 
+                        target_speed = 0 # 여기를 0으로 둬야 감속 로직을 통해 서서히 줄어듦
 
     logical_reason = None
     if current_time < msg_expiry and last_transient_msg is not None:
@@ -253,7 +241,7 @@ def process_safety_logic(
 
 # ---- 메인 하드웨어 루프 ----
 def hardware_loop():
-    global current_duty, current_pedal_raw, current_safety_reason, current_remaining_time, stop_threads, is_audio_busy
+    global current_duty, target_duty_raw, current_pedal_raw, current_safety_reason, current_remaining_time, stop_threads, is_audio_busy
     
     GPIO.setmode(GPIO.BCM); GPIO.setwarnings(False)
     GPIO.setup(PWM_A_PIN, GPIO.OUT); GPIO.setup(IN1_PIN, GPIO.OUT); GPIO.setup(IN2_PIN, GPIO.OUT)
@@ -276,6 +264,9 @@ def hardware_loop():
     if PLATFORM == "LINUX":
         try: ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1); ser.flush()
         except: pass
+
+    # 실제 출력되는 값 (스무딩 적용용 변수)
+    smoothed_duty = 0.0
 
     try:
         while not stop_threads:
@@ -312,8 +303,26 @@ def hardware_loop():
                     press_timestamps, state["prev_over_90"], state["prev_front_danger"], state["last_pedal_active_time"]
                 )
                 
-                new_reason = result["logical_reason"]
+                # 1. 로직에서 목표 속도(Raw Target)를 받아옴
+                target_raw = float(result["target_speed"])
+                target_duty_raw = target_raw # 디버깅용 저장
                 
+                # 2. [핵심] 스무딩(감속/가속) 처리
+                # 목표가 현재보다 크면 가속(ACCEL_STEP), 작으면 감속(DECEL_STEP)
+                if target_raw > smoothed_duty:
+                    smoothed_duty += ACCEL_STEP
+                    if smoothed_duty > target_raw: smoothed_duty = target_raw
+                elif target_raw < smoothed_duty:
+                    smoothed_duty -= DECEL_STEP
+                    if smoothed_duty < target_raw: smoothed_duty = target_raw
+                
+                # 3. 최종 모터 적용
+                current_duty = smoothed_duty # 전역 변수 업데이트
+                pwm_a.ChangeDutyCycle(smoothed_duty)
+                pwm_b.ChangeDutyCycle(smoothed_duty)
+
+                # --- 이유 및 오디오 처리 ---
+                new_reason = result["logical_reason"]
                 should_speak = False
                 if new_reason is not None:
                     if new_reason != last_enqueued_reason: should_speak = True
@@ -336,10 +345,6 @@ def hardware_loop():
                     "prev_front_danger": result["prev_front_danger"], "last_pedal_active_time": result["last_pedal_active_time"]
                 })
                 
-                target_speed = result["target_speed"]
-                pwm_a.ChangeDutyCycle(target_speed); pwm_b.ChangeDutyCycle(target_speed)
-                current_duty = target_speed
-
                 data_queue.put({
                     "t": current_time * 1000, "p": current_pedal_value, "d": current_duty,
                     "v": result["angular_velocity"], "dist": round(final_dist, 1),
@@ -348,6 +353,7 @@ def hardware_loop():
 
                 last_pedal_value = current_pedal_value; last_time = current_time
             
+            # 루프 주기 0.01초
             time.sleep(0.01)
 
     except Exception as e: print(e)
