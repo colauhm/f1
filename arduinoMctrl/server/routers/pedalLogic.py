@@ -80,7 +80,6 @@ data_queue = queue.Queue()
 # [통합] 오디오 명령 큐 (사이렌 + TTS)
 # 아이템 형식: {"type": "alert", "msg": "경고문구", "siren": True/False}
 audio_queue = queue.Queue()
-
 # ... (상단 import 부분 동일) ...
 
 # =========================================================
@@ -169,6 +168,26 @@ def audio_processing_thread():
             is_audio_busy = False
 
 # ... (나머지 코드 동일) ...
+# ---- 거리 측정 ----
+def read_distance():
+    if PLATFORM == "WINDOWS": return 50 + 60 * np.sin(time.time()) + np.random.randint(-2, 2)
+    try:
+        GPIO.output(TRIG_PIN, False); time.sleep(0.000005)
+        GPIO.output(TRIG_PIN, True); time.sleep(0.00001)
+        GPIO.output(TRIG_PIN, False)
+        start_time = time.time(); stop_time = time.time(); timeout = start_time + 0.04
+        while GPIO.input(ECHO_PIN) == 0:
+            start_time = time.time()
+            if start_time > timeout: return None
+        while GPIO.input(ECHO_PIN) == 1:
+            stop_time = time.time()
+            if stop_time > timeout: return None
+        elapsed = stop_time - start_time
+        distance = (elapsed * 34300) / 2
+        if 2 < distance < 400: return distance
+        else: return None
+    except: return None
+
 
 # =========================================================
 # 안전 로직 및 모터 속도 계산 함수 (순수 로직)
