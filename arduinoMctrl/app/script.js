@@ -4,12 +4,11 @@ var wsAddress = protocol + location.host + "/ws";
 
 const ws = new WebSocket(wsAddress);
 
-const MAX_RPM = 1350; // 모터 최대 RPM
-const TIRE_CIRCUMFERENCE = 2.0; // 타이어 둘레 (미터, 일반 승용차 기준)
-
+// [수정됨] HTML 요소 가져오기 (기존 duty-val 제거됨)
 const needle = document.getElementById("needle");
-const rpmText = document.getElementById("rpm-val");
-const speedText = document.getElementById("speed-val");
+const rpmText = document.getElementById("rpm-val");    // RPM 표시용
+const speedText = document.getElementById("speed-val");  // 속도(km/h) 표시용
+
 const warningBox = document.getElementById("warning-dialog");
 const warningText = document.getElementById("warning-text");
 const valVelocity = document.getElementById("val-velocity");
@@ -22,6 +21,10 @@ const THRESHOLD_COUNT = 3;
 const COLOR_GREEN = "#39ff14";
 const COLOR_RED = "#ff0000";
 
+// [수정됨] RPM 및 속도 계산용 상수
+const MAX_RPM = 1350;        // 모터 최대 RPM
+const TIRE_CIRCUM = 2.0;     // 타이어 둘레 (미터)
+
 let pedalBuffer = [], motorBuffer = [], velocityBuffer = [], distanceBuffer = [];
 
 // [수정] 저장 시간을 1.5분으로 제한 (렉 방지)
@@ -31,7 +34,7 @@ const MAX_DATA_POINTS = 2500;
 
 let viewSeconds = 60; 
 
-// 마우스 이벤트 로직 (기존 동일)
+// 마우스 이벤트 로직
 document.addEventListener("DOMContentLoaded", () => {
     const icons = document.querySelectorAll(".info-icon");
     const chartGrid = document.getElementById("chartGrid");
@@ -59,7 +62,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 });
 
-// 차트 설정
+// 차트 설정 함수
 function createChartConfig(buffer, label, color = '#39ff14') {
     return {
         type: 'line',
@@ -68,15 +71,14 @@ function createChartConfig(buffer, label, color = '#39ff14') {
                 label: label, data: buffer, borderWidth: 1.5, fill: true,
                 backgroundColor: color.startsWith('#') ? color + '1A' : color, borderColor: color,
                 tension: 0.4, pointRadius: 0, spanGaps: true,
-                // 성능 최적화를 위해 애니메이션 끔
                 animation: false, 
                 segment: { borderColor: ctx => (ctx.p1.raw && ctx.p1.raw.restricted) ? '#ff0000' : color }
             }]
         },
         options: {
             responsive: true, maintainAspectRatio: false, 
-            animation: false, // [중요] 렉 방지
-            parsing: false,   // [중요] 고속 렌더링 최적화
+            animation: false, 
+            parsing: false,
             interaction: { intersect: false },
             scales: {
                 x: { 
@@ -107,9 +109,8 @@ const distanceChart = new Chart(ctxDistance, createChartConfig(distanceBuffer, '
 distanceChart.options.scales.y.min = 0;
 
 function initChartData() {
-    // 초기에는 빈 데이터로 시작하거나 아주 조금만 채움
     const now = Date.now();
-    for (let i = 100; i > 0; i--) { // [수정] 초기 데이터 2000개 -> 100개로 축소
+    for (let i = 100; i > 0; i--) { 
         const pt = { x: now - (i * 50), y: 0, restricted: false };
         pedalBuffer.push(pt); motorBuffer.push(pt); velocityBuffer.push(pt); distanceBuffer.push(pt);
     }
@@ -124,31 +125,32 @@ window.setTimeMode = function(seconds) {
     requestAnimationFrame(updateChartScale);
 };
 
+// [핵심] WebSocket 데이터 수신부
 ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
     if (data.type === "batch") {
         const current = data.current;
         const history = data.history;
 
-        // 1. 게이지
+        // 1. 게이지 및 텍스트 업데이트 (수정된 로직)
         if (current.duty !== undefined) {
             const duty = parseFloat(current.duty);
             
-            // (1) 바늘 각도 계산 (기존 로직 유지: 0~100%를 -90~90도로 매핑)
+            // 바늘 각도 (기존 로직 유지)
             let angle = (duty * 1.8) - 90;
-            if (angle < -90) angle = -90; 
-            if (angle > 90) angle = 90;
+            if (angle < -90) angle = -90; if (angle > 90) angle = 90;
             needle.style.transform = `rotate(${angle}deg)`;
 
-            // (2) RPM 계산: (Duty / 100) * MAX_RPM
-            const currentRpm = (duty / 100) * MAX_RPM;
+            // RPM 및 속도 계산
+            // RPM = (현재 듀티 / 100) * 최대 RPM
+            const currentRpm = (duty / 100.0) * MAX_RPM;
             
-            // (3) 속도(km/h) 계산: RPM * 둘레(m) * 60(분) / 1000(km)
-            const currentSpeed = currentRpm * TIRE_CIRCUMFERENCE * 0.06;
+            // Speed = RPM * 둘레(m) * 60분 / 1000m(km환산)
+            const currentSpeed = currentRpm * TIRE_CIRCUM * 0.06;
 
-            // (4) 텍스트 업데이트 (소수점 없이 정수로 표현하거나 toFixed(1))
-            rpmText.innerText = Math.round(currentRpm); 
-            speedText.innerText = currentSpeed.toFixed(0);
+            // 화면 표시 (RPM은 정수, 속도는 반올림 정수)
+            rpmText.innerText = Math.round(currentRpm);
+            speedText.innerText = Math.round(currentSpeed);
         }
 
         // 2. 경고창
@@ -161,7 +163,7 @@ ws.onmessage = (event) => {
             warningBox.style.display = "none";
         }
 
-        // 3. 데이터 업데이트
+        // 3. 데이터 업데이트 (기존 동일)
         if (history && history.length > 0) {
             let lastPt = history[history.length - 1];
 
@@ -180,7 +182,6 @@ ws.onmessage = (event) => {
 
             history.forEach(pt => {
                 const isRestricted = (pt.r === 1);
-                // [최적화] 객체 재사용 없이 간단하게
                 const point = { x: pt.t, y: pt.p, restricted: isRestricted };
                 const pointM = { x: pt.t, y: pt.d, restricted: isRestricted };
                 const pointV = { x: pt.t, y: pt.v, restricted: isRestricted };
@@ -192,10 +193,8 @@ ws.onmessage = (event) => {
                 distanceBuffer.push(pointD);
             });
             
-            // [최적화] 데이터가 너무 많으면 즉시 잘라냄 (메모리 보호)
             if (pedalBuffer.length > MAX_DATA_POINTS) {
                 const excess = pedalBuffer.length - MAX_DATA_POINTS;
-                // splice는 한 번에 여러 개를 지워서 shift 반복보다 빠름
                 pedalBuffer.splice(0, excess);
                 motorBuffer.splice(0, excess);
                 velocityBuffer.splice(0, excess);
@@ -210,12 +209,7 @@ function startRenderLoop() {
         const now = Date.now();
         const limitTime = now - (MAX_STORE_MINUTES * 60 * 1000);
         
-        // [최적화] 시간 기준 정리 (너무 오래된 데이터 삭제)
-        // while문 대신 filter나 findIndex를 쓰면 좋지만, 간단히 앞에서부터 체크
-        // 성능을 위해 한 프레임에 최대 50개까지만 지우던 제한을 품
-        
         if (pedalBuffer.length > 0 && pedalBuffer[0].x < limitTime) {
-             // 오래된 데이터가 몇 개인지 찾아서 한 방에 지움 (splice)
              let removeCount = 0;
              for(let i=0; i<pedalBuffer.length; i++) {
                  if(pedalBuffer[i].x < limitTime) removeCount++;
@@ -240,7 +234,7 @@ function updateChartScale() {
     const minTime = now - (viewSeconds * 1000);
     [pedalChart, motorChart, velocityChart, distanceChart].forEach(chart => {
         chart.options.scales.x.min = minTime; chart.options.scales.x.max = now;
-        chart.update('none'); // 'none' 모드로 업데이트하여 성능 확보
+        chart.update('none'); 
     });
 }
 

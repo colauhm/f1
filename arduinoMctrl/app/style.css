@@ -16,43 +16,22 @@ h1 { font-weight: 200; margin-bottom: 30px; color: #00d2ff; text-shadow: 0 0 10p
 .gauge-bg { width: 300px; height: 300px; border-radius: 50%; background: conic-gradient(from 180deg, #00ff00 0deg, #ffff00 90deg, #ff0000 180deg); position: absolute; top: 0; left: 0; }
 .gauge-cover { width: 240px; height: 240px; background-color: #111; border-radius: 50%; position: absolute; top: 30px; left: 30px; }
 .needle { width: 4px; height: 130px; background: #fff; position: absolute; bottom: 0; left: 148px; transform-origin: bottom center; transform: rotate(-90deg); border-radius: 50% 50% 0 0; z-index: 10; transition: transform 0.1s linear; }
-/* style.css 의 .gauge-text 관련 부분 수정 */
 
+/* [수정됨] 게이지 텍스트 스타일 (RPM, Speed) */
 .gauge-text { 
-    margin-top: 10px; /* 간격 조정 */
-    z-index: 20; 
-    text-align: center; 
-    display: flex;
-    flex-direction: column;
-    gap: 5px; /* RPM과 km/h 사이 간격 */
+    margin-top: 10px; z-index: 20; text-align: center; 
+    display: flex; flex-direction: column; gap: 5px; 
 }
-
 .gauge-info-row {
-    display: flex;
-    justify-content: center;
-    align-items: baseline;
-    gap: 5px;
+    display: flex; justify-content: center; align-items: baseline; gap: 6px;
 }
-
 .digital-val {
-    font-family: 'Segoe UI', monospace; /* 숫자 등폭 폰트 추천 */
-    font-size: 1.8rem; 
-    font-weight: bold; 
-    color: #888; /* RPM은 약간 어둡게 */
+    font-family: 'Segoe UI', monospace; font-size: 1.5rem; font-weight: bold; color: #888;
 }
-
-/* 속도(km/h)는 더 크고 밝게 강조 */
 .digital-val.highlight {
-    font-size: 2.5rem;
-    color: #fff;
-    text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+    font-size: 2.8rem; color: #fff; text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
 }
-
-.unit { 
-    font-size: 1.0rem; 
-    color: #666; 
-    font-weight: normal;
-}
+.unit { font-size: 0.9rem; color: #666; }
 
 /* 상태 정보 박스 */
 .status-info-box { width: 300px; box-sizing: border-box; text-align: left; }
@@ -61,92 +40,53 @@ h1 { font-weight: 200; margin-bottom: 30px; color: #00d2ff; text-shadow: 0 0 10p
 .info-row:last-child { border-bottom: none; margin-bottom: 0; }
 .info-label { color: #aaa; font-size: 0.9rem; }
 .info-value { font-weight: bold; font-size: 1.1rem; transition: color 0.2s ease; }
-.unit-xs { font-size: 0.8rem; color: #666; }
 
 /* 차트 섹션 */
 .chart-section { width: 900px; background: rgba(255, 255, 255, 0.05); border-radius: 15px; padding: 20px; border: 1px solid #333; }
 .chart-header { display: flex; justify-content: space-between; margin-bottom: 15px; }
 .chart-title { font-size: 1.2rem; color: #ddd; }
 .chart-controls { display: flex; gap: 8px; }
-/* ---- 시간 선택 버튼 ---- */
-.time-btn {
-    background: transparent; /* [수정] 배경 투명하게 (주변과 동일) */
-    border: 1px solid #444;
-    color: #888;
-    padding: 6px 14px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 0.85rem;
-    transition: all 0.3s ease; /* 부드러운 전환 */
-}
 
-/* [Hover] 마우스 올렸을 때: 아주 은은한 빛 */
+/* 버튼 스타일 */
+.time-btn {
+    background: transparent; border: 1px solid #444; color: #888;
+    padding: 6px 14px; border-radius: 6px; cursor: pointer;
+    font-size: 0.85rem; transition: all 0.3s ease;
+}
 .time-btn:hover {
-    background: rgba(57, 255, 20, 0.05); /* 배경은 아주 연한 틴트만 */
-    border-color: #39ff14; /* 테두리는 형광색 */
-    color: #39ff14;        /* 글자도 형광색 */
-    
-    /* [수정] 그림자를 넓고 연하게 퍼뜨려서 '은은한' 느낌 강조 */
-    box-shadow: 0 0 15px rgba(57, 255, 20, 0.3), 
-                inset 0 0 5px rgba(57, 255, 20, 0.1);
-    
-    /* 텍스트 빛 번짐도 연하게 */
+    background: rgba(57, 255, 20, 0.05); border-color: #39ff14; color: #39ff14;
+    box-shadow: 0 0 15px rgba(57, 255, 20, 0.3), inset 0 0 5px rgba(57, 255, 20, 0.1);
     text-shadow: 0 0 8px rgba(57, 255, 20, 0.4);
 }
-
-/* [Active] 클릭된 상태: 빛 번짐 없이 깔끔한 형광색 (배경 투명 유지) */
 .time-btn.active {
-    background: transparent; /* 배경 투명 */
-    border-color: #39ff14;
-    color: #39ff14;
-    font-weight: bold;
-    
-    /* 빛 번짐 효과 제거 */
-    box-shadow: none; 
-    text-shadow: none;
+    background: transparent; border-color: #39ff14; color: #39ff14;
+    font-weight: bold; box-shadow: none; text-shadow: none;
 }
+
 /* 차트 그리드 */
 .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; position: relative; }
 
-/* 공통 박스 스타일 */
 .chart-wrapper { 
-    background: rgba(0, 0, 0, 0.2); 
-    border-radius: 8px; 
-    padding: 10px; 
-    border: 1px solid #222;
-    transition: all 0.3s ease;
-    position: relative;
-    z-index: 1;
+    background: rgba(0, 0, 0, 0.2); border-radius: 8px; padding: 10px; 
+    border: 1px solid #222; transition: all 0.3s ease; position: relative; z-index: 1;
 }
 
 .chart-top-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; padding: 0 5px; }
 .chart-label { text-align: left; font-size: 0.9rem; color: #aaa; }
 
-/* 아이콘 */
 .info-icon { position: relative; cursor: pointer; width: 20px; height: 20px; display: flex; justify-content: center; align-items: center; }
 .info-icon i { font-style: normal; font-size: 12px; font-weight: bold; color: #666; border: 1px solid #666; border-radius: 50%; width: 16px; height: 16px; display: block; line-height: 16px; text-align: center; transition: all 0.2s; }
 .info-icon:hover i { color: #00d2ff; border-color: #00d2ff; background: rgba(0, 210, 255, 0.1); }
 
-/* 툴팁 */
 .tooltip { position: absolute; top: 25px; right: -10px; width: 200px; background: rgba(0, 0, 0, 0.9); border: 1px solid #00d2ff; color: #eee; padding: 10px; border-radius: 6px; font-size: 0.85rem; line-height: 1.4; text-align: left; opacity: 0; visibility: hidden; transform: translateY(-10px); transition: all 0.3s ease; z-index: 200; pointer-events: none; box-shadow: 0 5px 15px rgba(0,0,0,0.5); }
 
-/* ---- 하이라이트 효과 ---- */
 .chart-wrapper.active {
-    transform: scale(1.05); 
-    border-color: #00d2ff;
-    box-shadow: 0 0 20px rgba(0, 210, 255, 0.2);
-    background: rgba(20, 20, 20, 0.95);
-    z-index: 100;
+    transform: scale(1.05); border-color: #00d2ff;
+    box-shadow: 0 0 20px rgba(0, 210, 255, 0.2); background: rgba(20, 20, 20, 0.95); z-index: 100;
 }
 .chart-wrapper.active .tooltip { opacity: 1; visibility: visible; transform: translateY(0); }
 
-/* ---- [복구] Dimming (어둡게 하기) 효과 ---- */
-/* 차트 그리드 안에 있는 요소들 중 active가 아닌 것들은 흐리고 어둡게 */
-.chart-grid.dimming .chart-wrapper:not(.active) {
-    opacity: 0.2;
-    filter: blur(2px);
-    transform: scale(0.98);
-}
+.chart-grid.dimming .chart-wrapper:not(.active) { opacity: 0.2; filter: blur(2px); transform: scale(0.98); }
 
 .chart-container { position: relative; width: 100%; height: 180px; }
 
