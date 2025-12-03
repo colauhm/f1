@@ -81,28 +81,52 @@ data_queue = queue.Queue()
 # 아이템 형식: {"type": "alert", "msg": "경고문구", "siren": True/False}
 audio_queue = queue.Queue()
 
-
 # =========================================================
 # [통합] 오디오 처리 스레드 (사이렌 -> TTS 순차 실행)
 # =========================================================
 def audio_processing_thread():
     global is_audio_busy
     
-    # TTS 엔진 초기화
+    # TTS 엔진 초기화 및 목소리 강제 설정
     engine = None
     try:
-        engine = pyttsx3.init()
+        # 드라이버를 명시적으로 'espeak'로 지정
+        engine = pyttsx3.init(driverName='espeak')
+        
+        # [핵심 수정] 사용 가능한 목소리 리스트를 가져와서 유효한 것으로 설정
+        voices = engine.getProperty('voices')
+        
+        selected_voice = None
+        
+        # 1순위: 한국어 목소리 찾기
+        for v in voices:
+            if 'korea' in v.name.lower() or 'ko' in v.languages:
+                selected_voice = v.id
+                break
+        
+        # 2순위: 한국어가 없으면 그냥 첫 번째 목소리 사용 (에러 방지용)
+        if selected_voice is None and len(voices) > 0:
+            selected_voice = voices[0].id
+            
+        # 목소리 설정 적용
+        if selected_voice:
+            engine.setProperty('voice', selected_voice)
+        
+        # 말하기 속도 설정
         rate = engine.getProperty('rate')
-        engine.setProperty('rate', rate + 20) # 속도 약간 빠르게
+        engine.setProperty('rate', rate + 20) 
+
     except Exception as e:
         print(f"TTS Init Failed: {e}")
+        # 엔진 초기화 실패 시 engine을 None으로 둬서 아래 로직이 무시되게 함
+        engine = None
 
     # 사이렌 소리 데이터 미리 생성 (최적화)
     sample_rate = 48000
     beep_freq = 600
     beep_duration = 0.3
     silence_duration = 0.2
-    repeats = 3 # 횟수 조절
+    repeats = 3 
     
     t_beep = np.linspace(0, beep_duration, int(sample_rate * beep_duration), endpoint=False)
     beep_wave = np.sign(np.sin(2 * np.pi * beep_freq * t_beep)).astype(np.float32)
@@ -111,33 +135,29 @@ def audio_processing_thread():
 
     while not stop_threads:
         try:
-            # 큐에서 명령을 꺼냄 (타임아웃 1초)
             task = audio_queue.get(timeout=1)
-            
-            # [시작] 오디오 사용 중 플래그 ON
             is_audio_busy = True
             
-            # 1. 사이렌 재생 (요청 시)
+            # 1. 사이렌 재생
             if task.get("siren", False):
                 try:
                     sd.default.device = AUDIO_CARD_ID
-                    # 볼륨 UP
                     os.system(f"amixer -c {AUDIO_CARD_ID} set PCM 80% > /dev/null 2>&1")
-                    # blocking=True로 설정하여 소리가 다 끝날 때까지 여기서 대기함
                     sd.play(full_siren_wave, sample_rate, blocking=True)
                 except Exception as e:
                     print(f"Siren Error: {e}")
 
-            # 2. TTS 말하기
+            # 2. TTS 말하기 (엔진이 정상 초기화되었을 때만)
             msg = task.get("msg", "")
             if msg and engine:
-                # 특수문자 제거
                 clean_msg = msg.replace("⚠️", "").replace("🚫", "").replace("🔵", "").strip()
                 if clean_msg:
-                    engine.say(clean_msg)
-                    engine.runAndWait() # 다 말할 때까지 대기
+                    try:
+                        engine.say(clean_msg)
+                        engine.runAndWait()
+                    except Exception as e:
+                        print(f"TTS Speak Error: {e}")
 
-            # [종료] 오디오 사용 중 플래그 OFF
             is_audio_busy = False
             audio_queue.task_done()
 
@@ -145,7 +165,7 @@ def audio_processing_thread():
             pass
         except Exception as e:
             print(f"Audio Thread Error: {e}")
-            is_audio_busy = False # 에러 시에도 플래그 해제
+            is_audio_busy = False
 
 
 # ---- 거리 측정 ----
