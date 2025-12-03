@@ -8,6 +8,8 @@ from fastapi import APIRouter, FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 import os
 import numpy as np
+import wave
+import subprocess
 
 # ---- 1. 하드웨어 설정 ----
 try:
@@ -38,7 +40,7 @@ router = APIRouter(prefix="/ws")
 PWM_A_PIN = 13; IN1_PIN = 23; IN2_PIN = 24
 PWM_B_PIN = 12; IN3_PIN = 5; IN4_PIN = 6
 TRIG_PIN = 27; ECHO_PIN = 17 
-BUTTON_PIN = 21 
+BUTTON_PIN = 21  # [안전 해제 버튼]
 
 # [기어 변속 버튼]
 BTN_DRIVE_PIN = 16  
@@ -72,9 +74,12 @@ SHIFT_DELAY_TIME = 0.2
 current_duty = 0.0          
 target_duty_raw = 0.0       
 current_pedal_raw = 0
-current_safety_reason = None
+current_safety_reason = None # 현재 화면에 표시 중인 경고 문구
 current_remaining_time = 0
 stop_threads = False
+
+# [오디오 제어용 플래그]
+is_warning_sound_active = False 
 
 # [초기 상태 N]
 drive_mode = 'N' 
@@ -86,6 +91,69 @@ shift_pause_timer = 0.0
 
 dist_history = deque(maxlen=10) 
 data_queue = queue.Queue()
+
+# ---- USB 오디오 카드 찾기 ----
+def get_usb_card_number():
+    try:
+        result = subprocess.check_output("aplay -l", shell=True).decode()
+        for line in result.split('\n'):
+            if "USB" in line and "card" in line:
+                parts = line.split(":")
+                card_part = parts[0] 
+                card_num = card_part.replace("card", "").strip()
+                return card_num
+        return None 
+    except:
+        return None
+
+USB_CARD_NUM = get_usb_card_number()
+print(f"Detected USB Card Number: {USB_CARD_NUM}")
+
+# ---- [수정] 자동차 경고음(Chime) 파일 생성 ----
+def generate_chime_file(filename="/tmp/chime.wav"):
+    try:
+        sample_rate = 44100
+        duration = 0.8  # 소리 길이 (띵~)
+        t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
+        
+        # 부드러운 띵~ 소리 (Sine wave + Decay)
+        freq = 880 # A5
+        decay = np.exp(-3 * t) # 소리가 점점 줄어듦
+        wave_data = 0.5 * np.sin(2 * np.pi * freq * t) * decay
+        
+        wave_data = (wave_data * 32767).astype(np.int16)
+        with wave.open(filename, 'w') as wf:
+            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(sample_rate)
+            wf.writeframes(wave_data.tobytes())
+    except Exception as e:
+        print(f"Sound Gen Error: {e}")
+
+generate_chime_file()
+
+# ---- [수정] 오디오 스레드 (반복 재생 로직) ----
+def audio_processing_thread():
+    global is_warning_sound_active, stop_threads, USB_CARD_NUM
+    
+    while not stop_threads:
+        # 경고 상태일 때만 소리 재생
+        if is_warning_sound_active:
+            try:
+                device_flag = ""
+                if USB_CARD_NUM is not None:
+                    device_flag = f"-D plughw:{USB_CARD_NUM},0"
+                
+                # aplay로 wav 재생
+                cmd = f"aplay -q {device_flag} /tmp/chime.wav"
+                os.system(cmd)
+                
+                # 소리 간격 (띵~ ... 띵~ ...)
+                time.sleep(0.5) 
+            except Exception as e:
+                print(f"Audio Error: {e}")
+                time.sleep(1)
+        else:
+            # 경고 없으면 대기 (CPU 절약)
+            time.sleep(0.1)
 
 # ---- 거리 측정 ----
 def read_distance():
@@ -119,12 +187,14 @@ def process_safety_logic(
 ):
     target_speed = 0; frame_reason = None
     current_angular_velocity = 0.0
+    trigger_sound = False
     
     # [1] Park(P)
     if current_drive_mode == 'P':
         return {
             "target_speed": 0, "logical_reason": None,
-            "angular_velocity": 0, "lock_active": False, "msg_expiry": 0,
+            "trigger_sound": False, "angular_velocity": 0,
+            "lock_active": False, "msg_expiry": 0,
             "last_transient_msg": None, "prev_over_90": False,
             "prev_front_danger": False, "last_pedal_active_time": current_time,
             "visual_gear": "P"
@@ -134,7 +204,8 @@ def process_safety_logic(
     if current_drive_mode == 'N':
         return {
             "target_speed": 0, "logical_reason": None,
-            "angular_velocity": 0, "lock_active": False, "msg_expiry": 0,
+            "trigger_sound": False, "angular_velocity": 0,
+            "lock_active": False, "msg_expiry": 0,
             "last_transient_msg": None, "prev_over_90": False,
             "prev_front_danger": False, "last_pedal_active_time": current_time,
             "visual_gear": "N"
@@ -149,25 +220,30 @@ def process_safety_logic(
         front_danger = True
 
     # ---- [중요] 안전 제한(Lock) 로직 ----
+    # 한 번 lock_active가 되면 버튼 누를 때까지 절대 안 풀림
     if lock_active:
         target_speed = SAFETY_SPEED 
-        visual_gear = "N" 
+        visual_gear = "N" # 화면엔 N으로 표시
+        trigger_sound = True # 소리 계속 재생
         
-        # 안내 문구 설정
+        # 1단계: 엑셀을 밟고 있으면 -> "발 떼세요"
         if current_pedal > 0:
             frame_reason = "⚠️ 엑셀에서 발을 먼저 떼세요!"
+        # 2단계: 엑셀을 뗐으면 -> "버튼 누르세요"
         else:
             if is_btn_pressed:
-                # 해제 성공
+                # [해제 조건 충족]
                 lock_active = False; msg_expiry = 0
-                frame_reason = None; target_speed = IDLE_DUTY 
+                frame_reason = None; target_speed = IDLE_DUTY
+                trigger_sound = False # 소리 끔
             else:
-                frame_reason = "🔵 푸쉬버튼을 눌러 제한을 해제하세요"
+                frame_reason = "🔵 해제버튼(21번)을 누르세요"
     
     # 위험 감지 (충돌)
     elif front_danger:
         frame_reason = "⚠️ 전방을 주의하세요!"
         target_speed = 0
+        trigger_sound = True # 위험하니까 소리 재생
 
     # 정상 주행 중 감지 (급발진/과속)
     else:
@@ -191,11 +267,12 @@ def process_safety_logic(
             prev_over_90 = is_over_90
 
             if trigger_event:
+                # [잠금 시작]
                 lock_active = True
                 msg_expiry = current_time + 5.0; last_transient_msg = event_msg
                 target_speed = SAFETY_SPEED
                 visual_gear = "N" 
-                # 여기서 리턴하지 않고, 다음 루프부터 frame_reason이 채워지도록 함
+                trigger_sound = True
             else:
                 if current_pedal > 0:
                     last_pedal_active_time = current_time
@@ -203,11 +280,8 @@ def process_safety_logic(
                 else:
                     target_speed = IDLE_DUTY 
 
-    # [핵심 수정] 메시지 우선순위 변경
-    # 안내 문구(frame_reason)가 있으면 그것을 최우선으로 표시
-    # 그게 없을 때만 5초간 유지되는 이벤트 메시지(last_transient_msg) 표시
+    # 메시지 표시 우선순위 정리
     logical_reason = None
-    
     if frame_reason is not None:
         logical_reason = frame_reason
     elif current_time < msg_expiry and last_transient_msg is not None:
@@ -215,6 +289,7 @@ def process_safety_logic(
 
     return {
         "target_speed": target_speed, "logical_reason": logical_reason,
+        "trigger_sound": trigger_sound,
         "angular_velocity": current_angular_velocity,
         "lock_active": lock_active, "msg_expiry": msg_expiry,
         "last_transient_msg": last_transient_msg, "prev_over_90": prev_over_90,
@@ -248,7 +323,7 @@ def simulate_transmission(duty_val, current_time):
 
 # ---- 메인 하드웨어 루프 ----
 def hardware_loop():
-    global current_duty, target_duty_raw, current_pedal_raw, current_safety_reason, current_remaining_time, stop_threads
+    global current_duty, target_duty_raw, current_pedal_raw, current_safety_reason, current_remaining_time, stop_threads, is_warning_sound_active
     global shift_pause_timer, drive_mode
     
     GPIO.setmode(GPIO.BCM); GPIO.setwarnings(False)
@@ -316,12 +391,16 @@ def hardware_loop():
                 drive_mode 
             )
             
-            if result["lock_active"] and drive_mode == 'D':
-                drive_mode = 'N'
-
+            # [잠금 상태 반영]
+            # 안전 제한 걸리면 Drive 모드여도 화면엔 N으로 표시
+            # result["lock_active"]가 True면 계속 유지됨
+            
             target_raw = float(result["target_speed"])
             visual_gear = result["visual_gear"]
             
+            # [소리 제어] 경고 상태면 전역 플래그 ON
+            is_warning_sound_active = result["trigger_sound"]
+
             is_shifting = (current_time < shift_pause_timer)
             
             if not is_shifting:
@@ -346,6 +425,7 @@ def hardware_loop():
             pwm_a.ChangeDutyCycle(smoothed_duty)
             pwm_b.ChangeDutyCycle(smoothed_duty)
 
+            # 경고 문구 업데이트
             new_reason = result["logical_reason"]
             current_safety_reason = new_reason
 
@@ -374,7 +454,8 @@ def hardware_loop():
         if ser and ser.is_open: ser.close()
 
 def start_hardware():
-    # 오디오 스레드 제거됨
+    t_audio = threading.Thread(target=audio_processing_thread, daemon=True)
+    t_audio.start()
     t_hw = threading.Thread(target=hardware_loop, daemon=True)
     t_hw.start()
 
