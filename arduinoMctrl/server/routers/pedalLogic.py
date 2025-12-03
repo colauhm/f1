@@ -8,8 +8,9 @@ from fastapi import APIRouter, FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 import os
 import numpy as np
-import sounddevice as sd
 import pyttsx3
+import wave # [추가] wav 파일 생성을 위해 필요
+import sounddevice as sd # 장치 ID 검색용으로만 사용 (재생X)
 
 # ---- 1. 하드웨어 설정 ----
 try:
@@ -54,27 +55,22 @@ IDLE_SPEED = 20
 IDLE_TIMEOUT = 5.0
 COLLISION_DIST_LIMIT = 100.0 
 
-# ---- [수정됨] 오디오 장치 정보 가져오기 ----
-def get_audio_device_info():
-    """USB 오디오 장치의 ID와 지원하는 샘플링 레이트를 반환한다."""
+# ---- [수정됨] 오디오 카드 ID 찾기 ----
+def get_audio_card_id():
+    """USB 오디오 카드의 인덱스 번호를 찾는다."""
     try:
-        # 1. USB 장치 우선 검색
         devices = sd.query_devices()
         for i, dev in enumerate(devices):
+            # USB 장치이고 출력 채널이 있으면 선택
             if 'USB' in dev['name'] and dev['max_output_channels'] > 0:
-                # 장치의 기본 샘플링 레이트 가져오기 (없으면 48000)
-                rate = int(dev.get('default_samplerate', 48000))
-                return i, rate
-        
-        # 2. 없으면 시스템 기본 장치 사용
-        default_device = sd.query_devices(kind='output')
-        return default_device['index'], int(default_device.get('default_samplerate', 48000))
+                return i
+        # 없으면 기본값 1 (보통 라즈베리파이에서 USB 오디오는 1번)
+        return 1
     except:
-        return 0, 48000 # 완전 실패 시 안전값
+        return 1
 
-# 전역 변수 초기화 시 정보를 미리 가져옴
-AUDIO_DEVICE_ID, SYSTEM_SAMPLE_RATE = get_audio_device_info()
-print(f"Detected Audio Config -> ID: {AUDIO_DEVICE_ID}, Rate: {SYSTEM_SAMPLE_RATE}Hz")
+AUDIO_CARD_ID = get_audio_card_id()
+print(f"Detected Audio Card ID: {AUDIO_CARD_ID}")
 
 
 # ---- 전역 변수 ----
@@ -89,9 +85,41 @@ dist_history = deque(maxlen=10)
 data_queue = queue.Queue()
 audio_queue = queue.Queue()
 
+# ---- [신규] 사이렌 WAV 파일 생성 함수 ----
+def generate_siren_file(filename="/tmp/siren.wav"):
+    """사이렌 소리를 만들어 wav 파일로 저장한다 (충돌 방지용)"""
+    try:
+        sample_rate = 44100
+        duration = 1.5 # 1.5초 길이
+        freq = 600
+        
+        t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
+        # 사인파 생성
+        wave_data = 0.5 * np.sin(2 * np.pi * freq * t)
+        
+        # 삐-삐-삐 효과를 위해 0.3초마다 끊기
+        mask = (t % 0.3) < 0.15
+        wave_data = wave_data * mask
+        
+        # 16비트 정수로 변환
+        wave_data = (wave_data * 32767).astype(np.int16)
+        
+        with wave.open(filename, 'w') as wf:
+            wf.setnchannels(1)      # 모노
+            wf.setsampwidth(2)      # 2바이트 (16비트)
+            wf.setframerate(sample_rate)
+            wf.writeframes(wave_data.tobytes())
+            
+        print(f"Siren file generated at {filename}")
+    except Exception as e:
+        print(f"Failed to generate siren wav: {e}")
+
+# 시작할 때 사이렌 파일 미리 생성
+generate_siren_file()
+
 
 # =========================================================
-# [수정됨] 오디오 처리 스레드 (샘플링 레이트 오류 해결)
+# [완전 수정됨] 오디오 처리 스레드 (os.system 사용)
 # =========================================================
 def audio_processing_thread():
     global is_audio_busy
@@ -106,10 +134,10 @@ def audio_processing_thread():
             if 'korea' in v.name.lower() or 'ko' in v.languages:
                 selected_voice = v.id
                 break
-        if selected_voice is None and len(voices) > 0:
-            selected_voice = voices[0].id
         if selected_voice:
             engine.setProperty('voice', selected_voice)
+        else:
+            if len(voices) > 0: engine.setProperty('voice', voices[0].id)
         
         rate = engine.getProperty('rate')
         engine.setProperty('rate', rate + 20) 
@@ -117,32 +145,22 @@ def audio_processing_thread():
         print(f"TTS Init Failed: {e}")
         engine = None
 
-    # 2. 사이렌 소리 데이터 생성 (감지된 SYSTEM_SAMPLE_RATE 사용)
-    # 하드웨어가 지원하는 레이트로 생성해야 오류가 안 남
-    sample_rate = SYSTEM_SAMPLE_RATE 
-    beep_freq = 600
-    beep_duration = 0.3
-    silence_duration = 0.2
-    repeats = 3 
-    
-    t_beep = np.linspace(0, beep_duration, int(sample_rate * beep_duration), endpoint=False)
-    beep_wave = np.sign(np.sin(2 * np.pi * beep_freq * t_beep)).astype(np.float32)
-    silence_wave = np.zeros(int(sample_rate * silence_duration), dtype=np.float32)
-    full_siren_wave = np.concatenate([beep_wave, silence_wave] * repeats) * 0.5
-
     while not stop_threads:
         try:
             task = audio_queue.get(timeout=1)
             is_audio_busy = True
             
-            # 1. 사이렌 재생
+            # 1. 사이렌 재생 (aplay 명령어 사용)
             if task.get("siren", False):
                 try:
-                    # device=AUDIO_DEVICE_ID, samplerate=sample_rate 명시
-                    sd.play(full_siren_wave, samplerate=sample_rate, device=AUDIO_DEVICE_ID, blocking=True)
-                    time.sleep(0.3) # 재생 후 안정화 대기
+                    # plughw를 사용하면 샘플링 레이트 문제를 OS가 알아서 해결해줌
+                    # -D plughw:{ID},0 옵션으로 특정 카드 강제 지정
+                    # -q: 조용히 실행
+                    cmd = f"aplay -q -D plughw:{AUDIO_CARD_ID},0 /tmp/siren.wav"
+                    os.system(cmd)
+                    time.sleep(0.2)
                 except Exception as e:
-                    print(f"Siren Error: {e}")
+                    print(f"Siren Command Error: {e}")
 
             # 2. TTS 말하기
             msg = task.get("msg", "")
