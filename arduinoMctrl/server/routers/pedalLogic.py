@@ -109,16 +109,16 @@ def get_usb_card_number():
 USB_CARD_NUM = get_usb_card_number()
 print(f"Detected USB Card Number: {USB_CARD_NUM}")
 
-# ---- [수정] 자동차 경고음(Chime) 파일 생성 ----
+# ---- 자동차 경고음(Chime) 파일 생성 ----
 def generate_chime_file(filename="/tmp/chime.wav"):
     try:
         sample_rate = 44100
-        duration = 0.8  # 소리 길이 (띵~)
+        duration = 0.8  # 소리 길이
         t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
         
-        # 부드러운 띵~ 소리 (Sine wave + Decay)
+        # 부드러운 띵~ 소리
         freq = 880 # A5
-        decay = np.exp(-3 * t) # 소리가 점점 줄어듦
+        decay = np.exp(-3 * t)
         wave_data = 0.5 * np.sin(2 * np.pi * freq * t) * decay
         
         wave_data = (wave_data * 32767).astype(np.int16)
@@ -130,7 +130,7 @@ def generate_chime_file(filename="/tmp/chime.wav"):
 
 generate_chime_file()
 
-# ---- [수정] 오디오 스레드 (반복 재생 로직) ----
+# ---- 오디오 스레드 (반복 재생 로직) ----
 def audio_processing_thread():
     global is_warning_sound_active, stop_threads, USB_CARD_NUM
     
@@ -142,17 +142,13 @@ def audio_processing_thread():
                 if USB_CARD_NUM is not None:
                     device_flag = f"-D plughw:{USB_CARD_NUM},0"
                 
-                # aplay로 wav 재생
                 cmd = f"aplay -q {device_flag} /tmp/chime.wav"
                 os.system(cmd)
-                
-                # 소리 간격 (띵~ ... 띵~ ...)
                 time.sleep(0.5) 
             except Exception as e:
                 print(f"Audio Error: {e}")
                 time.sleep(1)
         else:
-            # 경고 없으면 대기 (CPU 절약)
             time.sleep(0.1)
 
 # ---- 거리 측정 ----
@@ -181,7 +177,7 @@ def read_distance():
 def process_safety_logic(
     current_time, current_pedal, last_pedal, last_time,
     final_dist, is_btn_pressed,
-    lock_active, msg_expiry, last_transient_msg,
+    lock_active, pedal_error_expiry, # [NEW] 페달 오조작 메시지 만료 시간
     press_timestamps, prev_over_90, prev_front_danger, last_pedal_active_time,
     current_drive_mode
 ):
@@ -194,10 +190,9 @@ def process_safety_logic(
         return {
             "target_speed": 0, "logical_reason": None,
             "trigger_sound": False, "angular_velocity": 0,
-            "lock_active": False, "msg_expiry": 0,
-            "last_transient_msg": None, "prev_over_90": False,
-            "prev_front_danger": False, "last_pedal_active_time": current_time,
-            "visual_gear": "P"
+            "lock_active": False, "pedal_error_expiry": 0,
+            "prev_over_90": False, "prev_front_danger": False, 
+            "last_pedal_active_time": current_time, "visual_gear": "P"
         }
     
     # [2] Neutral(N)
@@ -205,10 +200,9 @@ def process_safety_logic(
         return {
             "target_speed": 0, "logical_reason": None,
             "trigger_sound": False, "angular_velocity": 0,
-            "lock_active": False, "msg_expiry": 0,
-            "last_transient_msg": None, "prev_over_90": False,
-            "prev_front_danger": False, "last_pedal_active_time": current_time,
-            "visual_gear": "N"
+            "lock_active": False, "pedal_error_expiry": 0,
+            "prev_over_90": False, "prev_front_danger": False,
+            "last_pedal_active_time": current_time, "visual_gear": "N"
         }
 
     # [3] Drive(D)
@@ -220,30 +214,33 @@ def process_safety_logic(
         front_danger = True
 
     # ---- [중요] 안전 제한(Lock) 로직 ----
-    # 한 번 lock_active가 되면 버튼 누를 때까지 절대 안 풀림
     if lock_active:
         target_speed = SAFETY_SPEED 
         visual_gear = "N" # 화면엔 N으로 표시
         trigger_sound = True # 소리 계속 재생
         
-        # 1단계: 엑셀을 밟고 있으면 -> "발 떼세요"
-        if current_pedal > 0:
-            frame_reason = "⚠️ 엑셀에서 발을 먼저 떼세요!"
-        # 2단계: 엑셀을 뗐으면 -> "버튼 누르세요"
+        # [수정된 로직]
+        # 1순위: "페달 오조작 감지" 메시지 기간이 남아있으면 그걸 보여줌 (3초간)
+        if current_time < pedal_error_expiry:
+            frame_reason = "⚠️ 페달 오조작 감지!"
         else:
-            if is_btn_pressed:
-                # [해제 조건 충족]
-                lock_active = False; msg_expiry = 0
-                frame_reason = None; target_speed = IDLE_DUTY
-                trigger_sound = False # 소리 끔
+            # 2순위: 3초 지난 후 -> 복구 안내 메시지
+            if current_pedal > 0:
+                frame_reason = "⚠️ 엑셀에서 발을 먼저 떼세요!"
             else:
-                frame_reason = "🔵 해제버튼(21번)을 누르세요"
+                if is_btn_pressed:
+                    # [해제 조건 충족]
+                    lock_active = False; pedal_error_expiry = 0
+                    frame_reason = None; target_speed = IDLE_DUTY
+                    trigger_sound = False # 소리 끔
+                else:
+                    frame_reason = "🔵 해제버튼(21번)을 누르세요"
     
     # 위험 감지 (충돌)
     elif front_danger:
         frame_reason = "⚠️ 전방을 주의하세요!"
         target_speed = 0
-        trigger_sound = True # 위험하니까 소리 재생
+        trigger_sound = True 
 
     # 정상 주행 중 감지 (급발진/과속)
     else:
@@ -256,23 +253,27 @@ def process_safety_logic(
             
             trigger_event = False; event_msg = ""
             if angular_velocity >= CRITICAL_ANGULAR_VELOCITY:
-                trigger_event = True; event_msg = "⚠️ 급발진 감지!"
+                trigger_event = True
             
             is_over_90 = (current_pedal >= 90)
             if is_over_90 and not prev_over_90: press_timestamps.append(current_time)
             while press_timestamps and press_timestamps[0] < current_time - RAPID_PRESS_WINDOW:
                 press_timestamps.popleft()
             if len(press_timestamps) >= RAPID_PRESS_COUNT:
-                trigger_event = True; event_msg = "🚫 과속 페달 연타!"; press_timestamps.clear()
+                trigger_event = True; press_timestamps.clear()
             prev_over_90 = is_over_90
 
             if trigger_event:
                 # [잠금 시작]
                 lock_active = True
-                msg_expiry = current_time + 5.0; last_transient_msg = event_msg
+                # [핵심] 여기서 3초 뒤 시간을 만료시간으로 설정
+                pedal_error_expiry = current_time + 3.0
+                
                 target_speed = SAFETY_SPEED
                 visual_gear = "N" 
                 trigger_sound = True
+                # 즉시 메시지 표시를 위해 frame_reason 설정
+                frame_reason = "⚠️ 페달 오조작 감지!"
             else:
                 if current_pedal > 0:
                     last_pedal_active_time = current_time
@@ -280,19 +281,12 @@ def process_safety_logic(
                 else:
                     target_speed = IDLE_DUTY 
 
-    # 메시지 표시 우선순위 정리
-    logical_reason = None
-    if frame_reason is not None:
-        logical_reason = frame_reason
-    elif current_time < msg_expiry and last_transient_msg is not None:
-        logical_reason = last_transient_msg
-
     return {
-        "target_speed": target_speed, "logical_reason": logical_reason,
+        "target_speed": target_speed, "logical_reason": frame_reason,
         "trigger_sound": trigger_sound,
         "angular_velocity": current_angular_velocity,
-        "lock_active": lock_active, "msg_expiry": msg_expiry,
-        "last_transient_msg": last_transient_msg, "prev_over_90": prev_over_90,
+        "lock_active": lock_active, "pedal_error_expiry": pedal_error_expiry,
+        "prev_over_90": prev_over_90,
         "prev_front_danger": front_danger, "last_pedal_active_time": last_pedal_active_time,
         "visual_gear": visual_gear
     }
@@ -341,8 +335,16 @@ def hardware_loop():
     GPIO.output(IN3_PIN, True); GPIO.output(IN4_PIN, False)
     
     press_timestamps = deque(); last_pedal_value = 0; last_time = time.time()
-    state = { "lock_active": False, "msg_expiry": 0.0, "last_transient_msg": None,
-              "prev_over_90": False, "prev_front_danger": False, "last_pedal_active_time": time.time() }
+    
+    # [상태 변수] pedal_error_expiry 추가됨
+    state = { 
+        "lock_active": False, 
+        "pedal_error_expiry": 0.0,
+        "last_transient_msg": None, 
+        "prev_over_90": False, 
+        "prev_front_danger": False, 
+        "last_pedal_active_time": time.time() 
+    }
 
     ser = None
     smoothed_duty = 0.0
@@ -386,19 +388,19 @@ def hardware_loop():
             result = process_safety_logic(
                 current_time, current_pedal_raw, last_pedal_value, last_time,
                 final_dist, is_btn_pressed,
-                state["lock_active"], state["msg_expiry"], state["last_transient_msg"],
+                state["lock_active"], state["pedal_error_expiry"], None,
                 press_timestamps, state["prev_over_90"], state["prev_front_danger"], state["last_pedal_active_time"],
                 drive_mode 
             )
             
-            # [잠금 상태 반영]
-            # 안전 제한 걸리면 Drive 모드여도 화면엔 N으로 표시
-            # result["lock_active"]가 True면 계속 유지됨
-            
+            # 잠금 상태 반영
+            if result["lock_active"] and drive_mode == 'D':
+                drive_mode = 'N'
+
             target_raw = float(result["target_speed"])
             visual_gear = result["visual_gear"]
             
-            # [소리 제어] 경고 상태면 전역 플래그 ON
+            # 소리 제어
             is_warning_sound_active = result["trigger_sound"]
 
             is_shifting = (current_time < shift_pause_timer)
@@ -425,14 +427,15 @@ def hardware_loop():
             pwm_a.ChangeDutyCycle(smoothed_duty)
             pwm_b.ChangeDutyCycle(smoothed_duty)
 
-            # 경고 문구 업데이트
             new_reason = result["logical_reason"]
             current_safety_reason = new_reason
 
             state.update({
-                "lock_active": result["lock_active"], "msg_expiry": result["msg_expiry"],
-                "last_transient_msg": result["last_transient_msg"], "prev_over_90": result["prev_over_90"],
-                "prev_front_danger": result["prev_front_danger"], "last_pedal_active_time": result["last_pedal_active_time"]
+                "lock_active": result["lock_active"], 
+                "pedal_error_expiry": result["pedal_error_expiry"],
+                "prev_over_90": result["prev_over_90"],
+                "prev_front_danger": result["prev_front_danger"], 
+                "last_pedal_active_time": result["last_pedal_active_time"]
             })
             
             data_queue.put({
