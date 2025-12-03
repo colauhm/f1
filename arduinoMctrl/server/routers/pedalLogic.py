@@ -57,7 +57,7 @@ SAFETY_SPEED = 20
 COLLISION_DIST_LIMIT = 100.0 
 
 # [D모드 최소 속도] 30km/h ≈ Duty 19%
-IDLE_DUTY = 12.0     
+IDLE_DUTY = 13.0     
 IDLE_TIMEOUT = 5.0
 
 # [가감속 반응성]
