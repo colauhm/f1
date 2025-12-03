@@ -177,7 +177,7 @@ def read_distance():
 def process_safety_logic(
     current_time, current_pedal, last_pedal, last_time,
     final_dist, is_btn_pressed,
-    lock_active, pedal_error_expiry, # [NEW] 페달 오조작 메시지 만료 시간
+    lock_active, pedal_error_expiry,
     press_timestamps, prev_over_90, prev_front_danger, last_pedal_active_time,
     current_drive_mode
 ):
@@ -219,12 +219,12 @@ def process_safety_logic(
         visual_gear = "N" # 화면엔 N으로 표시
         trigger_sound = True # 소리 계속 재생
         
-        # [수정된 로직]
-        # 1순위: "페달 오조작 감지" 메시지 기간이 남아있으면 그걸 보여줌 (3초간)
+        # [우선순위 로직]
+        # 1. 3초간 "페달 오조작 감지" 강제 표시
         if current_time < pedal_error_expiry:
             frame_reason = "⚠️ 페달 오조작 감지!"
         else:
-            # 2순위: 3초 지난 후 -> 복구 안내 메시지
+            # 2. 3초 후 -> 복구 안내 메시지
             if current_pedal > 0:
                 frame_reason = "⚠️ 엑셀에서 발을 먼저 떼세요!"
             else:
@@ -266,13 +266,11 @@ def process_safety_logic(
             if trigger_event:
                 # [잠금 시작]
                 lock_active = True
-                # [핵심] 여기서 3초 뒤 시간을 만료시간으로 설정
                 pedal_error_expiry = current_time + 3.0
                 
                 target_speed = SAFETY_SPEED
                 visual_gear = "N" 
                 trigger_sound = True
-                # 즉시 메시지 표시를 위해 frame_reason 설정
                 frame_reason = "⚠️ 페달 오조작 감지!"
             else:
                 if current_pedal > 0:
@@ -336,11 +334,10 @@ def hardware_loop():
     
     press_timestamps = deque(); last_pedal_value = 0; last_time = time.time()
     
-    # [상태 변수] pedal_error_expiry 추가됨
+    # [수정] last_transient_msg 제거, pedal_error_expiry 유지
     state = { 
         "lock_active": False, 
         "pedal_error_expiry": 0.0,
-        "last_transient_msg": None, 
         "prev_over_90": False, 
         "prev_front_danger": False, 
         "last_pedal_active_time": time.time() 
@@ -385,10 +382,11 @@ def hardware_loop():
             is_btn_pressed = False
             if PLATFORM == "LINUX": is_btn_pressed = (GPIO.input(BUTTON_PIN) == 0)
 
+            # [수정] 인자 개수 13개로 맞춤 (None 제거)
             result = process_safety_logic(
                 current_time, current_pedal_raw, last_pedal_value, last_time,
                 final_dist, is_btn_pressed,
-                state["lock_active"], state["pedal_error_expiry"], None,
+                state["lock_active"], state["pedal_error_expiry"], 
                 press_timestamps, state["prev_over_90"], state["prev_front_danger"], state["last_pedal_active_time"],
                 drive_mode 
             )
