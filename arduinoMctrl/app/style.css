@@ -1,4 +1,3 @@
-/* 기본 스타일 */
 body {
     background-color: #111; color: #eee;
     font-family: 'Segoe UI', sans-serif;
@@ -10,30 +9,48 @@ h1 { font-weight: 200; margin-bottom: 30px; color: #00d2ff; text-shadow: 0 0 10p
 .main-display { display: flex; justify-content: center; align-items: flex-start; gap: 40px; flex-wrap: wrap; }
 .left-panel { display: flex; flex-direction: column; gap: 20px; margin-top: 20px; align-items: center; }
 
-/* 게이지 */
+/* [추가] 게이지와 기어 스트립을 나란히 놓기 위한 그룹 */
+.gauge-group {
+    display: flex; align-items: flex-end; gap: 20px;
+}
+
 .gauge-wrapper { position: relative; width: 300px; display: flex; flex-direction: column; align-items: center; }
 .gauge-body { width: 300px; height: 150px; position: relative; overflow: hidden; }
 .gauge-bg { width: 300px; height: 300px; border-radius: 50%; background: conic-gradient(from 180deg, #00ff00 0deg, #ffff00 90deg, #ff0000 180deg); position: absolute; top: 0; left: 0; }
 .gauge-cover { width: 240px; height: 240px; background-color: #111; border-radius: 50%; position: absolute; top: 30px; left: 30px; }
 .needle { width: 4px; height: 130px; background: #fff; position: absolute; bottom: 0; left: 148px; transform-origin: bottom center; transform: rotate(-90deg); border-radius: 50% 50% 0 0; z-index: 10; transition: transform 0.1s linear; }
 
-/* [수정됨] 게이지 텍스트 스타일 (RPM, Speed) */
-.gauge-text { 
-    margin-top: 10px; z-index: 20; text-align: center; 
-    display: flex; flex-direction: column; gap: 5px; 
+.gear-indicator {
+    position: absolute; bottom: 10px; 
+    font-size: 1.5rem; font-weight: bold; color: #ffff00;
+    background: rgba(0,0,0,0.5); padding: 2px 10px; border-radius: 4px; border: 1px solid #444;
+    z-index: 30;
 }
-.gauge-info-row {
-    display: flex; justify-content: center; align-items: baseline; gap: 6px;
+
+/* [추가] 세로 기어 스트립 스타일 */
+.gear-strip {
+    display: flex; flex-direction: column; gap: 10px;
+    background: #222; padding: 10px; border-radius: 8px; border: 1px solid #444;
 }
-.digital-val {
-    font-family: 'Segoe UI', monospace; font-size: 1.5rem; font-weight: bold; color: #888;
+.gear-item {
+    font-size: 1.2rem; font-weight: bold; color: #555;
+    width: 30px; height: 30px; line-height: 30px; border-radius: 4px;
+    text-align: center; transition: all 0.2s;
 }
-.digital-val.highlight {
-    font-size: 2.8rem; color: #fff; text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
-}
+
+/* 활성화 시 네온 효과 */
+.gear-item.active#g-p { color: #ff0000; text-shadow: 0 0 10px #ff0000; background: rgba(255,0,0,0.1); border: 1px solid #ff0000; }
+.gear-item.active#g-r { color: #ffffff; text-shadow: 0 0 10px #ffffff; background: rgba(255,255,255,0.1); border: 1px solid #ffffff; }
+.gear-item.active#g-n { color: #ffff00; text-shadow: 0 0 10px #ffff00; background: rgba(255,255,0,0.1); border: 1px solid #ffff00; }
+.gear-item.active#g-d { color: #00ff00; text-shadow: 0 0 10px #00ff00; background: rgba(0,255,0,0.1); border: 1px solid #00ff00; }
+
+
+.gauge-text { margin-top: 10px; z-index: 20; text-align: center; display: flex; flex-direction: column; gap: 5px; }
+.gauge-info-row { display: flex; justify-content: center; align-items: baseline; gap: 6px; }
+.digital-val { font-family: 'Segoe UI', monospace; font-size: 1.5rem; font-weight: bold; color: #888; }
+.digital-val.highlight { font-size: 2.8rem; color: #fff; text-shadow: 0 0 10px rgba(255, 255, 255, 0.3); }
 .unit { font-size: 0.9rem; color: #666; }
 
-/* 상태 정보 박스 */
 .status-info-box { width: 300px; box-sizing: border-box; text-align: left; }
 .info-content { margin-top: 10px; }
 .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; border-bottom: 1px solid #222; padding-bottom: 4px; }
@@ -41,56 +58,30 @@ h1 { font-weight: 200; margin-bottom: 30px; color: #00d2ff; text-shadow: 0 0 10p
 .info-label { color: #aaa; font-size: 0.9rem; }
 .info-value { font-weight: bold; font-size: 1.1rem; transition: color 0.2s ease; }
 
-/* 차트 섹션 */
 .chart-section { width: 900px; background: rgba(255, 255, 255, 0.05); border-radius: 15px; padding: 20px; border: 1px solid #333; }
 .chart-header { display: flex; justify-content: space-between; margin-bottom: 15px; }
 .chart-title { font-size: 1.2rem; color: #ddd; }
 .chart-controls { display: flex; gap: 8px; }
 
-/* 버튼 스타일 */
-.time-btn {
-    background: transparent; border: 1px solid #444; color: #888;
-    padding: 6px 14px; border-radius: 6px; cursor: pointer;
-    font-size: 0.85rem; transition: all 0.3s ease;
-}
-.time-btn:hover {
-    background: rgba(57, 255, 20, 0.05); border-color: #39ff14; color: #39ff14;
-    box-shadow: 0 0 15px rgba(57, 255, 20, 0.3), inset 0 0 5px rgba(57, 255, 20, 0.1);
-    text-shadow: 0 0 8px rgba(57, 255, 20, 0.4);
-}
-.time-btn.active {
-    background: transparent; border-color: #39ff14; color: #39ff14;
-    font-weight: bold; box-shadow: none; text-shadow: none;
-}
+.time-btn { background: transparent; border: 1px solid #444; color: #888; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; transition: all 0.3s ease; }
+.time-btn:hover { background: rgba(57, 255, 20, 0.05); border-color: #39ff14; color: #39ff14; box-shadow: 0 0 15px rgba(57, 255, 20, 0.3), inset 0 0 5px rgba(57, 255, 20, 0.1); text-shadow: 0 0 8px rgba(57, 255, 20, 0.4); }
+.time-btn.active { background: transparent; border-color: #39ff14; color: #39ff14; font-weight: bold; box-shadow: none; text-shadow: none; }
 
-/* 차트 그리드 */
 .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; position: relative; }
-
-.chart-wrapper { 
-    background: rgba(0, 0, 0, 0.2); border-radius: 8px; padding: 10px; 
-    border: 1px solid #222; transition: all 0.3s ease; position: relative; z-index: 1;
-}
-
+.chart-wrapper { background: rgba(0, 0, 0, 0.2); border-radius: 8px; padding: 10px; border: 1px solid #222; transition: all 0.3s ease; position: relative; z-index: 1; }
 .chart-top-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; padding: 0 5px; }
 .chart-label { text-align: left; font-size: 0.9rem; color: #aaa; }
 
 .info-icon { position: relative; cursor: pointer; width: 20px; height: 20px; display: flex; justify-content: center; align-items: center; }
 .info-icon i { font-style: normal; font-size: 12px; font-weight: bold; color: #666; border: 1px solid #666; border-radius: 50%; width: 16px; height: 16px; display: block; line-height: 16px; text-align: center; transition: all 0.2s; }
 .info-icon:hover i { color: #00d2ff; border-color: #00d2ff; background: rgba(0, 210, 255, 0.1); }
-
 .tooltip { position: absolute; top: 25px; right: -10px; width: 200px; background: rgba(0, 0, 0, 0.9); border: 1px solid #00d2ff; color: #eee; padding: 10px; border-radius: 6px; font-size: 0.85rem; line-height: 1.4; text-align: left; opacity: 0; visibility: hidden; transform: translateY(-10px); transition: all 0.3s ease; z-index: 200; pointer-events: none; box-shadow: 0 5px 15px rgba(0,0,0,0.5); }
 
-.chart-wrapper.active {
-    transform: scale(1.05); border-color: #00d2ff;
-    box-shadow: 0 0 20px rgba(0, 210, 255, 0.2); background: rgba(20, 20, 20, 0.95); z-index: 100;
-}
+.chart-wrapper.active { transform: scale(1.05); border-color: #00d2ff; box-shadow: 0 0 20px rgba(0, 210, 255, 0.2); background: rgba(20, 20, 20, 0.95); z-index: 100; }
 .chart-wrapper.active .tooltip { opacity: 1; visibility: visible; transform: translateY(0); }
-
 .chart-grid.dimming .chart-wrapper:not(.active) { opacity: 0.2; filter: blur(2px); transform: scale(0.98); }
-
 .chart-container { position: relative; width: 100%; height: 180px; }
 
-/* 경고창 */
 .warning-box { position: fixed; top: 20%; left: 50%; transform: translate(-50%, -50%); background-color: rgba(255, 0, 0, 0.9); color: white; padding: 20px 40px; border-radius: 10px; z-index: 1000; border: 3px solid #ff5555; animation: blink 0.5s infinite alternate; }
 .warning-icon { font-size: 1.5rem; font-weight: bold; color: #ffff00; margin-bottom: 10px; }
 .warning-msg { font-size: 1.2rem; white-space: pre-line; }

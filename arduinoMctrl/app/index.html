@@ -20,13 +20,25 @@
         <div class="main-display">
             <div class="left-panel">
                 <div class="gauge-section">
-                    <div class="gauge-wrapper">
-                        <div class="gauge-body">
-                            <div class="gauge-bg"></div>
-                            <div class="gauge-cover"></div>
-                            <div id="needle" class="needle"></div>
+                    
+                    <div class="gauge-group">
+                        <div class="gauge-wrapper">
+                            <div class="gauge-body">
+                                <div class="gauge-bg"></div>
+                                <div class="gauge-cover"></div>
+                                <div id="needle" class="needle"></div>
+                            </div>
+                            <div class="gear-indicator" id="gear-box">P</div>
+                        </div>
+
+                        <div class="gear-strip">
+                            <div id="g-p" class="gear-item active">P</div>
+                            <div id="g-r" class="gear-item">R</div>
+                            <div id="g-n" class="gear-item">N</div>
+                            <div id="g-d" class="gear-item">D</div>
                         </div>
                     </div>
+                    
                     <div class="gauge-text">
                         <div class="gauge-info-row">
                             <span id="rpm-val" class="digital-val">0</span>
@@ -81,56 +93,38 @@
                 </div>
 
                 <div class="chart-grid" id="chartGrid">
-                    
                     <div class="chart-wrapper">
                         <div class="chart-top-row">
                             <div class="chart-label">Pedal Input (%)</div>
-                            <div class="info-icon">
-                                <i>i</i>
-                                <div class="tooltip">사용자가 밟은 엑셀 페달의 입력값(0~100%)입니다.</div>
-                            </div>
+                            <div class="info-icon"><i>i</i><div class="tooltip">페달 입력값</div></div>
                         </div>
                         <div class="chart-container"><canvas id="pedalChart"></canvas></div>
                     </div>
-
                     <div class="chart-wrapper">
                         <div class="chart-top-row">
                             <div class="chart-label">Motor Speed (%)</div>
-                            <div class="info-icon">
-                                <i>i</i>
-                                <div class="tooltip">안전 로직이 반영된 실제 모터의 출력값입니다.</div>
-                            </div>
+                            <div class="info-icon"><i>i</i><div class="tooltip">모터 출력값</div></div>
                         </div>
                         <div class="chart-container"><canvas id="motorChart"></canvas></div>
                     </div>
-
                     <div class="chart-wrapper">
                         <div class="chart-top-row">
-                            <div class="chart-label">Angular Velocity (deg/s)</div>
-                            <div class="info-icon">
-                                <i>i</i>
-                                <div class="tooltip">페달을 밟는 속도(변화량)입니다. 급발진 감지의 기준이 됩니다.</div>
-                            </div>
+                            <div class="chart-label">Angular Velocity</div>
+                            <div class="info-icon"><i>i</i><div class="tooltip">페달 변화 속도</div></div>
                         </div>
                         <div class="chart-container"><canvas id="velocityChart"></canvas></div>
                     </div>
-
                     <div class="chart-wrapper">
                         <div class="chart-top-row">
                             <div class="chart-label">Distance (Sonar)</div>
-                            <div class="info-icon">
-                                <i>i</i>
-                                <div class="tooltip">초음파 센서로 감지한 전방 장애물과의 거리(cm)입니다.</div>
-                            </div>
+                            <div class="info-icon"><i>i</i><div class="tooltip">전방 거리</div></div>
                         </div>
                         <div class="chart-container"><canvas id="distanceChart"></canvas></div>
                     </div>
-
                 </div>
             </div>
         </div>
     </div>
-
     <script src="/static/script.js"></script>
 </body>
 </html>

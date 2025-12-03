@@ -1,13 +1,12 @@
-// 현재 페이지가 https라면 wss를, 아니면 ws를 쓰도록 자동 설정
 var protocol = (location.protocol === 'https:') ? 'wss://' : 'ws://';
 var wsAddress = protocol + location.host + "/ws";
 
 const ws = new WebSocket(wsAddress);
 
-// [수정됨] HTML 요소 가져오기 (기존 duty-val 제거됨)
 const needle = document.getElementById("needle");
-const rpmText = document.getElementById("rpm-val");    // RPM 표시용
-const speedText = document.getElementById("speed-val");  // 속도(km/h) 표시용
+const rpmText = document.getElementById("rpm-val");    
+const speedText = document.getElementById("speed-val");  
+const gearText = document.getElementById("gear-box"); 
 
 const warningBox = document.getElementById("warning-dialog");
 const warningText = document.getElementById("warning-text");
@@ -21,20 +20,13 @@ const THRESHOLD_COUNT = 3;
 const COLOR_GREEN = "#39ff14";
 const COLOR_RED = "#ff0000";
 
-// [수정됨] RPM 및 속도 계산용 상수
-const MAX_RPM = 1350;        // 모터 최대 RPM
-const TIRE_CIRCUM = 2.0;     // 타이어 둘레 (미터)
+const TIRE_CIRCUM = 2.0; 
 
 let pedalBuffer = [], motorBuffer = [], velocityBuffer = [], distanceBuffer = [];
-
-// [수정] 저장 시간을 1.5분으로 제한 (렉 방지)
 const MAX_STORE_MINUTES = 1.5; 
-// [추가] 데이터 개수 강제 제한 (안전장치: 최대 2500개까지만 저장)
 const MAX_DATA_POINTS = 2500;
-
 let viewSeconds = 60; 
 
-// 마우스 이벤트 로직
 document.addEventListener("DOMContentLoaded", () => {
     const icons = document.querySelectorAll(".info-icon");
     const chartGrid = document.getElementById("chartGrid");
@@ -44,9 +36,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const wrapper = e.target.closest(".chart-wrapper");
             if(wrapper) {
                 wrapper.classList.add("active");
-                if (wrapper.parentElement.id === "chartGrid") {
-                    chartGrid.classList.add("dimming");
-                }
+                if (wrapper.parentElement.id === "chartGrid") chartGrid.classList.add("dimming");
             }
         });
 
@@ -54,15 +44,12 @@ document.addEventListener("DOMContentLoaded", () => {
             const wrapper = e.target.closest(".chart-wrapper");
             if(wrapper) {
                 wrapper.classList.remove("active");
-                if (wrapper.parentElement.id === "chartGrid") {
-                    chartGrid.classList.remove("dimming");
-                }
+                if (wrapper.parentElement.id === "chartGrid") chartGrid.classList.remove("dimming");
             }
         });
     });
 });
 
-// 차트 설정 함수
 function createChartConfig(buffer, label, color = '#39ff14') {
     return {
         type: 'line',
@@ -76,16 +63,10 @@ function createChartConfig(buffer, label, color = '#39ff14') {
             }]
         },
         options: {
-            responsive: true, maintainAspectRatio: false, 
-            animation: false, 
-            parsing: false,
+            responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
             interaction: { intersect: false },
             scales: {
-                x: { 
-                    type: 'linear', display: true, 
-                    ticks: { color: '#666', maxTicksLimit: 5, callback: val => new Date(val).toLocaleTimeString('ko-KR', { hour12: false }) }, 
-                    grid: { display: false } 
-                },
+                x: { type: 'linear', display: true, ticks: { color: '#666', maxTicksLimit: 5, callback: val => new Date(val).toLocaleTimeString('ko-KR', { hour12: false }) }, grid: { display: false } },
                 y: { grid: { color: '#333' }, ticks: { color: '#888' } }
             },
             plugins: { legend: { display: false }, tooltip: { enabled: false } }
@@ -125,35 +106,47 @@ window.setTimeMode = function(seconds) {
     requestAnimationFrame(updateChartScale);
 };
 
-// [핵심] WebSocket 데이터 수신부
+// [함수 추가] 기어 스트립 불 켜기
+function updateGearStrip(char) {
+    // 1. 모든 불 끄기
+    document.querySelectorAll('.gear-item').forEach(el => el.classList.remove('active'));
+    
+    // 2. 해당 문자 불 켜기
+    const targetId = 'g-' + char.toLowerCase();
+    const targetEl = document.getElementById(targetId);
+    if(targetEl) targetEl.classList.add('active');
+}
+
 ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
     if (data.type === "batch") {
         const current = data.current;
         const history = data.history;
 
-        // 1. 게이지 및 텍스트 업데이트 (수정된 로직)
         if (current.duty !== undefined) {
             const duty = parseFloat(current.duty);
             
-            // 바늘 각도 (기존 로직 유지)
             let angle = (duty * 1.8) - 90;
             if (angle < -90) angle = -90; if (angle > 90) angle = 90;
             needle.style.transform = `rotate(${angle}deg)`;
 
-            // RPM 및 속도 계산
-            // RPM = (현재 듀티 / 100) * 최대 RPM
-            const currentRpm = (duty / 100.0) * MAX_RPM;
-            
-            // Speed = RPM * 둘레(m) * 60분 / 1000m(km환산)
-            const currentSpeed = currentRpm * TIRE_CIRCUM * 0.06;
+            const backendRpm = current.rpm || 0;
+            const backendGear = current.gear || 1;
+            const vGear = current.v_gear || 'P'; // 시각적 기어 (P, N, D)
 
-            // 화면 표시 (RPM은 정수, 속도는 반올림 정수)
-            rpmText.innerText = Math.round(currentRpm);
+            const currentSpeed = backendRpm * TIRE_CIRCUM * 0.06;
+
+            rpmText.innerText = backendRpm; 
             speedText.innerText = Math.round(currentSpeed);
+            
+            // 하단 텍스트는 상세 정보 표시 (P, N, D1, D2...)
+            if(vGear === 'D') gearText.innerText = "D" + backendGear;
+            else gearText.innerText = vGear;
+
+            // [추가] 세로 기어 스트립 업데이트
+            updateGearStrip(vGear);
         }
 
-        // 2. 경고창
         if (current.reason) {
             warningBox.style.display = "block";
             warningText.innerText = current.reason;
@@ -163,7 +156,6 @@ ws.onmessage = (event) => {
             warningBox.style.display = "none";
         }
 
-        // 3. 데이터 업데이트 (기존 동일)
         if (history && history.length > 0) {
             let lastPt = history[history.length - 1];
 
