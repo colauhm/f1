@@ -54,15 +54,28 @@ IDLE_SPEED = 20
 IDLE_TIMEOUT = 5.0
 COLLISION_DIST_LIMIT = 100.0 
 
-# ---- 오디오 장치 ----
-def get_usb_audio_id():
+# ---- [수정됨] 오디오 장치 정보 가져오기 ----
+def get_audio_device_info():
+    """USB 오디오 장치의 ID와 지원하는 샘플링 레이트를 반환한다."""
     try:
+        # 1. USB 장치 우선 검색
         devices = sd.query_devices()
         for i, dev in enumerate(devices):
-            if 'USB' in dev['name'] and dev['max_output_channels'] > 0: return i
-        return sd.default.device[1]
-    except: return 0
-AUDIO_CARD_ID = get_usb_audio_id()
+            if 'USB' in dev['name'] and dev['max_output_channels'] > 0:
+                # 장치의 기본 샘플링 레이트 가져오기 (없으면 48000)
+                rate = int(dev.get('default_samplerate', 48000))
+                return i, rate
+        
+        # 2. 없으면 시스템 기본 장치 사용
+        default_device = sd.query_devices(kind='output')
+        return default_device['index'], int(default_device.get('default_samplerate', 48000))
+    except:
+        return 0, 48000 # 완전 실패 시 안전값
+
+# 전역 변수 초기화 시 정보를 미리 가져옴
+AUDIO_DEVICE_ID, SYSTEM_SAMPLE_RATE = get_audio_device_info()
+print(f"Detected Audio Config -> ID: {AUDIO_DEVICE_ID}, Rate: {SYSTEM_SAMPLE_RATE}Hz")
+
 
 # ---- 전역 변수 ----
 current_duty = 0.0
@@ -70,20 +83,15 @@ current_pedal_raw = 0
 current_safety_reason = None
 current_remaining_time = 0
 stop_threads = False
-
-# [핵심] 오디오 재생 중인지 확인하는 플래그
 is_audio_busy = False
 
 dist_history = deque(maxlen=10) 
 data_queue = queue.Queue()
-
-# [통합] 오디오 명령 큐 (사이렌 + TTS)
-# 아이템 형식: {"type": "alert", "msg": "경고문구", "siren": True/False}
 audio_queue = queue.Queue()
-# ... (상단 import 부분 동일) ...
+
 
 # =========================================================
-# [수정됨] 오디오 처리 스레드 (충돌 방지 로직 적용)
+# [수정됨] 오디오 처리 스레드 (샘플링 레이트 오류 해결)
 # =========================================================
 def audio_processing_thread():
     global is_audio_busy
@@ -91,10 +99,7 @@ def audio_processing_thread():
     # 1. TTS 엔진 초기화
     engine = None
     try:
-        # espeak 드라이버 지정
         engine = pyttsx3.init(driverName='espeak')
-        
-        # 목소리 설정 (한국어 우선, 없으면 첫 번째)
         voices = engine.getProperty('voices')
         selected_voice = None
         for v in voices:
@@ -103,20 +108,18 @@ def audio_processing_thread():
                 break
         if selected_voice is None and len(voices) > 0:
             selected_voice = voices[0].id
-            
         if selected_voice:
             engine.setProperty('voice', selected_voice)
         
-        # 말하기 속도
         rate = engine.getProperty('rate')
         engine.setProperty('rate', rate + 20) 
-
     except Exception as e:
         print(f"TTS Init Failed: {e}")
         engine = None
 
-    # 2. 사이렌 소리 데이터 생성
-    sample_rate = 44100 # 48000에서 44100으로 변경 (호환성 높임)
+    # 2. 사이렌 소리 데이터 생성 (감지된 SYSTEM_SAMPLE_RATE 사용)
+    # 하드웨어가 지원하는 레이트로 생성해야 오류가 안 남
+    sample_rate = SYSTEM_SAMPLE_RATE 
     beep_freq = 600
     beep_duration = 0.3
     silence_duration = 0.2
@@ -125,7 +128,6 @@ def audio_processing_thread():
     t_beep = np.linspace(0, beep_duration, int(sample_rate * beep_duration), endpoint=False)
     beep_wave = np.sign(np.sin(2 * np.pi * beep_freq * t_beep)).astype(np.float32)
     silence_wave = np.zeros(int(sample_rate * silence_duration), dtype=np.float32)
-    # 볼륨을 50%로 낮춰서 생성 (클리핑 방지)
     full_siren_wave = np.concatenate([beep_wave, silence_wave] * repeats) * 0.5
 
     while not stop_threads:
@@ -133,15 +135,12 @@ def audio_processing_thread():
             task = audio_queue.get(timeout=1)
             is_audio_busy = True
             
-            # [수정 1] amixer(볼륨조절) 코드 삭제 -> 충돌 원인 제거
-            
             # 1. 사이렌 재생
             if task.get("siren", False):
                 try:
-                    # 장치 ID 명시적 지정 대신 default 사용
-                    sd.play(full_siren_wave, sample_rate, blocking=True)
-                    # [수정 2] 재생 후 잠시 대기 (오디오 장치 해제 시간 확보)
-                    time.sleep(0.5)
+                    # device=AUDIO_DEVICE_ID, samplerate=sample_rate 명시
+                    sd.play(full_siren_wave, samplerate=sample_rate, device=AUDIO_DEVICE_ID, blocking=True)
+                    time.sleep(0.3) # 재생 후 안정화 대기
                 except Exception as e:
                     print(f"Siren Error: {e}")
 
@@ -153,7 +152,6 @@ def audio_processing_thread():
                     try:
                         engine.say(clean_msg)
                         engine.runAndWait()
-                        # [수정 3] 말하기 후에도 잠시 대기
                         time.sleep(0.2)
                     except Exception as e:
                         print(f"TTS Speak Error: {e}")
@@ -167,7 +165,7 @@ def audio_processing_thread():
             print(f"Audio Thread Error: {e}")
             is_audio_busy = False
 
-# ... (나머지 코드 동일) ...
+
 # ---- 거리 측정 ----
 def read_distance():
     if PLATFORM == "WINDOWS": return 50 + 60 * np.sin(time.time()) + np.random.randint(-2, 2)
@@ -190,7 +188,7 @@ def read_distance():
 
 
 # =========================================================
-# 안전 로직 및 모터 속도 계산 함수 (순수 로직)
+# 안전 로직 및 모터 속도 계산 함수
 # =========================================================
 def process_safety_logic(
     current_time, current_pedal, last_pedal, last_time,
@@ -207,7 +205,6 @@ def process_safety_logic(
     if final_dist > 0 and final_dist <= COLLISION_DIST_LIMIT and current_pedal > 0:
         front_danger = True
 
-    # 1. 안전 잠금 상태
     if lock_active:
         target_speed = SAFETY_SPEED
         if current_pedal > 0:
@@ -219,13 +216,11 @@ def process_safety_logic(
             else:
                 frame_reason = "🔵 푸쉬버튼을 눌러 제한을 해제하세요"
 
-    # 2. 전방 장애물
     elif front_danger:
         frame_reason = "⚠️ 전방을 주의하세요!"
         target_speed = 0
         if not prev_front_danger: trigger_siren = True
 
-    # 3. 이벤트 감지 (급발진/연타)
     else:
         dt = current_time - last_time
         if dt > 0:
@@ -236,11 +231,9 @@ def process_safety_logic(
             
             trigger_event = False; event_msg = ""
 
-            # (A) 급발진
             if angular_velocity >= CRITICAL_ANGULAR_VELOCITY:
                 trigger_event = True; event_msg = "⚠️ 급발진 감지!"
             
-            # (B) 연타
             is_over_90 = (current_pedal >= 90)
             if is_over_90 and not prev_over_90: press_timestamps.append(current_time)
             while press_timestamps and press_timestamps[0] < current_time - RAPID_PRESS_WINDOW:
@@ -264,7 +257,6 @@ def process_safety_logic(
                     if (current_time - last_pedal_active_time) >= IDLE_TIMEOUT: target_speed = 0
                     else: target_speed = IDLE_SPEED
 
-    # 최종 메시지 결정 (로직상)
     logical_reason = None
     if current_time < msg_expiry and last_transient_msg is not None:
         logical_reason = last_transient_msg
@@ -284,7 +276,6 @@ def process_safety_logic(
 def hardware_loop():
     global current_duty, current_pedal_raw, current_safety_reason, current_remaining_time, stop_threads, is_audio_busy
     
-    # GPIO 설정
     GPIO.setmode(GPIO.BCM); GPIO.setwarnings(False)
     GPIO.setup(PWM_A_PIN, GPIO.OUT); GPIO.setup(IN1_PIN, GPIO.OUT); GPIO.setup(IN2_PIN, GPIO.OUT)
     GPIO.setup(PWM_B_PIN, GPIO.OUT); GPIO.setup(IN3_PIN, GPIO.OUT); GPIO.setup(IN4_PIN, GPIO.OUT)
@@ -300,16 +291,13 @@ def hardware_loop():
     press_timestamps = deque()
     last_pedal_value = 0; last_time = time.time()
     
-    # 상태 저장소
     state = {
         "lock_active": False, "msg_expiry": 0.0, "last_transient_msg": None,
         "prev_over_90": False, "prev_front_danger": False,
         "last_pedal_active_time": time.time()
     }
 
-    # 중복 TTS 방지용
     last_enqueued_reason = None
-
     ser = None
     if PLATFORM == "LINUX":
         try: ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1); ser.flush()
@@ -317,7 +305,6 @@ def hardware_loop():
 
     try:
         while not stop_threads:
-            # 시리얼 읽기
             if ser is None and PLATFORM == "LINUX":
                 try: ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1); ser.flush()
                 except: time.sleep(1); continue
@@ -345,7 +332,6 @@ def hardware_loop():
                 if PLATFORM == "LINUX":
                     is_btn_pressed = (GPIO.input(BUTTON_PIN) == 0)
 
-                # 1. 안전 로직 계산 (항상 실행)
                 result = process_safety_logic(
                     current_time, current_pedal_value, last_pedal_value, last_time,
                     final_dist, is_btn_pressed,
@@ -353,44 +339,28 @@ def hardware_loop():
                     press_timestamps, state["prev_over_90"], state["prev_front_danger"], state["last_pedal_active_time"]
                 )
                 
-                # 2. 로직상의 현재 경고 문구
                 new_reason = result["logical_reason"]
                 
-                # 3. 오디오 트리거 (사이렌 + TTS)
-                #    내용이 바뀌었거나, 새로 사이렌이 필요할 때 큐에 넣음
                 should_speak = False
                 if new_reason is not None:
                     if new_reason != last_enqueued_reason:
                         should_speak = True
-                    # 사이렌 이벤트가 발생했다면 문구가 같아도 소리는 나야 함 (급발진 등)
                     if result["trigger_siren"]: 
                         should_speak = True
                 else:
-                    last_enqueued_reason = None # 경고 해제됨
+                    last_enqueued_reason = None
 
                 if should_speak:
-                    audio_task = {
-                        "msg": new_reason,
-                        "siren": result["trigger_siren"]
-                    }
+                    audio_task = {"msg": new_reason, "siren": result["trigger_siren"]}
                     audio_queue.put(audio_task)
                     last_enqueued_reason = new_reason
 
-                # ======================================================
-                # [핵심] 화면 표시 제어 (Display Logic)
-                # "말하는 중(is_audio_busy)이면 화면 글자를 바꾸지 않는다"
-                # ======================================================
                 if is_audio_busy:
-                    # 오디오가 나오는 중이면 -> 화면 문구를 갱신하지 않고 기존 것 유지
-                    # (단, current_safety_reason이 비어있다면 업데이트 해줌)
                     if current_safety_reason is None and new_reason is not None:
                          current_safety_reason = new_reason
                 else:
-                    # 오디오가 조용하면 -> 실시간으로 화면 문구 업데이트
                     current_safety_reason = new_reason
-                # ======================================================
 
-                # 5. 상태 갱신
                 state.update({
                     "lock_active": result["lock_active"],
                     "msg_expiry": result["msg_expiry"],
@@ -400,7 +370,6 @@ def hardware_loop():
                     "last_pedal_active_time": result["last_pedal_active_time"]
                 })
                 
-                # 6. 모터 제어 (화면이 멈춰있어도 모터 제어는 즉시 반영됨)
                 target_speed = result["target_speed"]
                 pwm_a.ChangeDutyCycle(target_speed)
                 pwm_b.ChangeDutyCycle(target_speed)
@@ -427,11 +396,8 @@ def hardware_loop():
         if ser and ser.is_open: ser.close()
 
 def start_hardware():
-    # 오디오 스레드 시작
     t_audio = threading.Thread(target=audio_processing_thread, daemon=True)
     t_audio.start()
-    
-    # 하드웨어 스레드 시작
     t_hw = threading.Thread(target=hardware_loop, daemon=True)
     t_hw.start()
 
@@ -452,7 +418,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 "current": {
                     "duty": round(current_duty, 1),
                     "pedal": current_pedal_raw,
-                    "reason": current_safety_reason, # 여기서 전송되는 값이 화면에 뜸
+                    "reason": current_safety_reason,
                     "remaining_time": current_remaining_time
                 }
             }
