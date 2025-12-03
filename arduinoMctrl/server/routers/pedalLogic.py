@@ -40,11 +40,11 @@ router = APIRouter(prefix="/ws")
 PWM_A_PIN = 13; IN1_PIN = 23; IN2_PIN = 24
 PWM_B_PIN = 12; IN3_PIN = 5; IN4_PIN = 6
 TRIG_PIN = 27; ECHO_PIN = 17 
-BUTTON_PIN = 21 # 안전 해제 버튼
+BUTTON_PIN = 21 
 
 # [기어 변속 버튼]
-BTN_DRIVE_PIN = 16  # Drive 모드 버튼
-BTN_PARK_PIN = 20   # Park 모드 버튼
+BTN_DRIVE_PIN = 16  
+BTN_PARK_PIN = 20   
 
 SERIAL_PORT = '/dev/ttyUSB0'; BAUD_RATE = 115200
 
@@ -53,11 +53,10 @@ PEDAL_TOTAL_ANGLE = 45.0
 CRITICAL_ANGULAR_VELOCITY = 420
 RAPID_PRESS_COUNT = 3      
 RAPID_PRESS_WINDOW = 2.0   
-SAFETY_SPEED = 20     # 안전 제한 걸렸을 때 속도
+SAFETY_SPEED = 20     
 COLLISION_DIST_LIMIT = 100.0 
 
-# [수정] D모드 최소 속도 30km/h 설정을 위한 최소 Duty 값
-# 30km/h ≈ 250 RPM ≈ Duty 19% (Max 1350 RPM, 둘레 2m 기준)
+# [D모드 최소 속도] 30km/h ≈ Duty 19%
 IDLE_DUTY = 19.0      
 IDLE_TIMEOUT = 5.0
 
@@ -80,7 +79,7 @@ current_remaining_time = 0
 stop_threads = False
 is_audio_busy = False
 
-# [수정] 초기 상태는 N (Neutral)
+# [초기 상태 N]
 drive_mode = 'N' 
 
 # 변속기 상태
@@ -192,10 +191,10 @@ def process_safety_logic(
     target_speed = 0; trigger_siren = False; frame_reason = None
     current_angular_velocity = 0.0
     
-    # [1] Park(P) 또는 Neutral(N) 처리
+    # [1] Park(P) 모드: 경고창(logical_reason) 없음
     if current_drive_mode == 'P':
         return {
-            "target_speed": 0, "logical_reason": "🅿️ 주차 상태 (P)",
+            "target_speed": 0, "logical_reason": None,
             "trigger_siren": False, "angular_velocity": 0,
             "lock_active": False, "msg_expiry": 0,
             "last_transient_msg": None, "prev_over_90": False,
@@ -203,11 +202,38 @@ def process_safety_logic(
             "visual_gear": "P"
         }
     
-    if current_drive_mode == 'N':
-        # N 상태에서는 속도(target_speed)는 0이지만, 엑셀 밟으면 RPM만 올라가도록
-        # 0을 리턴하되, 메인 루프에서 RPM 계산에 페달 값을 씀
+    # [2] 안전 제한 (Lock Active) - 최우선 순위
+    if lock_active:
+        target_speed = SAFETY_SPEED 
+        visual_gear = "N" # 제한 걸리면 화면엔 N으로 표시
+        
+        # [복구된 해제 로직]
+        # 1단계: 엑셀을 밟고 있으면 "발 떼세요" 경고
+        if current_pedal > 0:
+            frame_reason = "⚠️ 엑셀에서 발을 먼저 떼세요!"
+        # 2단계: 엑셀을 뗐으면 "버튼 누르세요" 경고
+        else:
+            if is_btn_pressed:
+                # 버튼 누르면 해제 완료
+                lock_active = False; msg_expiry = 0
+                frame_reason = None; target_speed = IDLE_DUTY 
+            else:
+                frame_reason = "🔵 푸쉬버튼을 눌러 제한을 해제하세요"
+                
+        # Lock 상태에서는 여기서 바로 리턴 (N이나 D로직으로 넘어가지 않음)
         return {
-            "target_speed": 0, "logical_reason": "Neutral (공회전)",
+            "target_speed": target_speed, "logical_reason": frame_reason,
+            "trigger_siren": False, "angular_velocity": 0,
+            "lock_active": lock_active, "msg_expiry": msg_expiry,
+            "last_transient_msg": last_transient_msg, "prev_over_90": prev_over_90,
+            "prev_front_danger": prev_front_danger, "last_pedal_active_time": last_pedal_active_time,
+            "visual_gear": visual_gear
+        }
+
+    # [3] Neutral(N) 모드: 경고창(logical_reason) 없음
+    if current_drive_mode == 'N':
+        return {
+            "target_speed": 0, "logical_reason": None,
             "trigger_siren": False, "angular_velocity": 0,
             "lock_active": False, "msg_expiry": 0,
             "last_transient_msg": None, "prev_over_90": False,
@@ -215,28 +241,18 @@ def process_safety_logic(
             "visual_gear": "N"
         }
 
-    # [2] Drive(D) 모드 로직
+    # [4] Drive(D) 모드 - 정상 주행 로직
     visual_gear = "D" 
-
     front_danger = False
+    
+    # 전방 감지
     if final_dist > 0 and final_dist <= COLLISION_DIST_LIMIT and current_pedal > 0:
         front_danger = True
 
-    if lock_active:
-        target_speed = SAFETY_SPEED 
-        visual_gear = "N" # 안전 제한 시 강제로 N 표시
-        if current_pedal > 0: frame_reason = "⚠️ 엑셀에서 발을 먼저 떼세요!"
-        else:
-            if is_btn_pressed:
-                lock_active = False; msg_expiry = 0
-                frame_reason = None; target_speed = IDLE_DUTY 
-            else: frame_reason = "🔵 푸쉬버튼을 눌러 제한을 해제하세요"
-
-    elif front_danger:
+    if front_danger:
         frame_reason = "⚠️ 전방을 주의하세요!"
         target_speed = 0
         if not prev_front_danger: trigger_siren = True
-
     else:
         dt = current_time - last_time
         if dt > 0:
@@ -258,17 +274,19 @@ def process_safety_logic(
             prev_over_90 = is_over_90
 
             if trigger_event:
+                # 이벤트 발생 시 Lock 활성화
                 lock_active = True; trigger_siren = True
                 msg_expiry = current_time + 5.0; last_transient_msg = event_msg
                 target_speed = SAFETY_SPEED
-                visual_gear = "N" # 제한 걸림 -> N
+                visual_gear = "N" 
+                # 여기서 리턴하지 않고 다음 루프부터 lock_active 블록이 처리함
             else:
-                # [수정] D모드: 엑셀 안 밟아도 30km/h(IDLE_DUTY) 유지
+                # 정상 주행 (30km/h 크리핑 유지)
                 if current_pedal > 0:
                     last_pedal_active_time = current_time
                     target_speed = max(current_pedal, IDLE_DUTY)
                 else:
-                    target_speed = IDLE_DUTY # 크리핑 속도
+                    target_speed = IDLE_DUTY 
 
     logical_reason = None
     if current_time < msg_expiry and last_transient_msg is not None:
@@ -338,26 +356,21 @@ def hardware_loop():
 
     try:
         while not stop_threads:
-            # 1. 시리얼 연결
             if ser is None and PLATFORM == "LINUX":
                 try: ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1); ser.flush()
                 except: pass
 
-            # 2. 버튼 입력 감지 (P / D 모드 전환)
             if PLATFORM == "LINUX":
-                # [디버깅] 버튼 눌림 확인 로그
                 if GPIO.input(BTN_DRIVE_PIN) == 0:
                     if drive_mode != 'D': 
                         print("👉 Drive Button Pressed!")
                         drive_mode = 'D'
                 
-                # if 대신 elif를 쓰지 않고 개별 if로 체크하여 P 버튼 씹힘 방지
                 if GPIO.input(BTN_PARK_PIN) == 0:
                     if drive_mode != 'P':
                         print("👉 Park Button Pressed!")
                         drive_mode = 'P'
             
-            # 3. 페달 값 읽기
             if ser and ser.in_waiting > 0:
                 try:
                     lines = ser.read_all().decode('utf-8').split('\n')
@@ -369,17 +382,14 @@ def hardware_loop():
             
             current_time = time.time()
 
-            # 4. 거리 측정
             raw_dist = read_distance()
             if raw_dist is not None: dist_history.append(raw_dist)
             final_dist = 0.0
             if len(dist_history) > 0: final_dist = sum(dist_history) / len(dist_history)
 
-            # 5. 안전 버튼 상태
             is_btn_pressed = False
             if PLATFORM == "LINUX": is_btn_pressed = (GPIO.input(BUTTON_PIN) == 0)
 
-            # 6. 로직 처리 (모드 전달)
             result = process_safety_logic(
                 current_time, current_pedal_raw, last_pedal_value, last_time,
                 final_dist, is_btn_pressed,
@@ -388,14 +398,14 @@ def hardware_loop():
                 drive_mode 
             )
             
-            # 안전 제한 걸리면 자동으로 N으로 변경
-            if result["lock_active"] and drive_mode == 'D':
-                drive_mode = 'N'
-
+            # 안전 제한 걸리면 강제로 N 모드 전환 (화면 표시용)
+            # 물리적 drive_mode 변수는 D로 남아있어도 되지만, 
+            # 다음 루프부터 로직 처리를 위해 N으로 바꾸지는 않고(그래야 재진입시 D로 복귀가 편함), 
+            # 위 로직 안에서 visual_gear="N"으로 처리함.
+            
             target_raw = float(result["target_speed"])
             visual_gear = result["visual_gear"]
             
-            # 7. 모터 스무딩 & 변속 충격
             is_shifting = (current_time < shift_pause_timer)
             
             if not is_shifting:
@@ -406,17 +416,12 @@ def hardware_loop():
                     smoothed_duty -= DECEL_STEP
                     if smoothed_duty < target_raw: smoothed_duty = target_raw
             
-            # 8. 변속 시뮬레이션 및 RPM 계산
-            # 실제 모터 Duty는 target_raw를 따라가지만,
-            # N 모드일 때는 소리/게이지용 RPM을 위해 페달값을 시뮬레이션 함수에 넣음
-            
             sim_duty_input = smoothed_duty
             if visual_gear == 'N':
-                sim_duty_input = current_pedal_raw # N일 땐 페달 밟은 만큼 RPM 상승 (공회전)
+                sim_duty_input = current_pedal_raw 
 
             gear_num, rpm = simulate_transmission(sim_duty_input, current_time)
             
-            # P 모드일 때는 RPM도 0
             if visual_gear == 'P': 
                 rpm = 0
                 gear_num = 1
@@ -425,7 +430,6 @@ def hardware_loop():
             pwm_a.ChangeDutyCycle(smoothed_duty)
             pwm_b.ChangeDutyCycle(smoothed_duty)
 
-            # 9. 오디오 및 상태 업데이트
             new_reason = result["logical_reason"]
             should_speak = False
             if new_reason is not None:
