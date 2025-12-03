@@ -8,9 +8,8 @@ from fastapi import APIRouter, FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 import os
 import numpy as np
-import pyttsx3
-import wave # [추가] wav 파일 생성을 위해 필요
-import sounddevice as sd # 장치 ID 검색용으로만 사용 (재생X)
+import wave
+import sounddevice as sd
 
 # ---- 1. 하드웨어 설정 ----
 try:
@@ -61,17 +60,14 @@ def get_audio_card_id():
     try:
         devices = sd.query_devices()
         for i, dev in enumerate(devices):
-            # USB 장치이고 출력 채널이 있으면 선택
             if 'USB' in dev['name'] and dev['max_output_channels'] > 0:
                 return i
-        # 없으면 기본값 1 (보통 라즈베리파이에서 USB 오디오는 1번)
-        return 1
+        return 1 # 기본값
     except:
         return 1
 
 AUDIO_CARD_ID = get_audio_card_id()
 print(f"Detected Audio Card ID: {AUDIO_CARD_ID}")
-
 
 # ---- 전역 변수 ----
 current_duty = 0.0
@@ -85,94 +81,62 @@ dist_history = deque(maxlen=10)
 data_queue = queue.Queue()
 audio_queue = queue.Queue()
 
-# ---- [신규] 사이렌 WAV 파일 생성 함수 ----
+# ---- 사이렌 WAV 파일 생성 ----
 def generate_siren_file(filename="/tmp/siren.wav"):
-    """사이렌 소리를 만들어 wav 파일로 저장한다 (충돌 방지용)"""
     try:
         sample_rate = 44100
-        duration = 1.5 # 1.5초 길이
+        duration = 1.5 
         freq = 600
-        
         t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
-        # 사인파 생성
         wave_data = 0.5 * np.sin(2 * np.pi * freq * t)
-        
-        # 삐-삐-삐 효과를 위해 0.3초마다 끊기
         mask = (t % 0.3) < 0.15
         wave_data = wave_data * mask
-        
-        # 16비트 정수로 변환
         wave_data = (wave_data * 32767).astype(np.int16)
         
         with wave.open(filename, 'w') as wf:
-            wf.setnchannels(1)      # 모노
-            wf.setsampwidth(2)      # 2바이트 (16비트)
-            wf.setframerate(sample_rate)
+            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(sample_rate)
             wf.writeframes(wave_data.tobytes())
-            
-        print(f"Siren file generated at {filename}")
     except Exception as e:
-        print(f"Failed to generate siren wav: {e}")
+        print(f"Siren Gen Error: {e}")
 
-# 시작할 때 사이렌 파일 미리 생성
 generate_siren_file()
 
-
 # =========================================================
-# [완전 수정됨] 오디오 처리 스레드 (os.system 사용)
+# [최종 수정] 오디오 처리 스레드 (순수 명령어 방식)
 # =========================================================
 def audio_processing_thread():
     global is_audio_busy
     
-    # 1. TTS 엔진 초기화
-    engine = None
-    try:
-        engine = pyttsx3.init(driverName='espeak')
-        voices = engine.getProperty('voices')
-        selected_voice = None
-        for v in voices:
-            if 'korea' in v.name.lower() or 'ko' in v.languages:
-                selected_voice = v.id
-                break
-        if selected_voice:
-            engine.setProperty('voice', selected_voice)
-        else:
-            if len(voices) > 0: engine.setProperty('voice', voices[0].id)
-        
-        rate = engine.getProperty('rate')
-        engine.setProperty('rate', rate + 20) 
-    except Exception as e:
-        print(f"TTS Init Failed: {e}")
-        engine = None
+    # pyttsx3 라이브러리 초기화 제거 (충돌 원인 삭제)
 
     while not stop_threads:
         try:
             task = audio_queue.get(timeout=1)
             is_audio_busy = True
             
-            # 1. 사이렌 재생 (aplay 명령어 사용)
+            # 1. 사이렌 재생 (aplay)
             if task.get("siren", False):
                 try:
-                    # plughw를 사용하면 샘플링 레이트 문제를 OS가 알아서 해결해줌
-                    # -D plughw:{ID},0 옵션으로 특정 카드 강제 지정
-                    # -q: 조용히 실행
+                    # -D plughw:{ID},0 옵션으로 강제 출력
                     cmd = f"aplay -q -D plughw:{AUDIO_CARD_ID},0 /tmp/siren.wav"
                     os.system(cmd)
                     time.sleep(0.2)
                 except Exception as e:
-                    print(f"Siren Command Error: {e}")
+                    print(f"Siren Cmd Error: {e}")
 
-            # 2. TTS 말하기
+            # 2. TTS 말하기 (espeak -> aplay 파이프 연결)
             msg = task.get("msg", "")
-            if msg and engine:
+            if msg:
                 clean_msg = msg.replace("⚠️", "").replace("🚫", "").replace("🔵", "").strip()
                 if clean_msg:
                     try:
-                        engine.say(clean_msg)
-                        engine.runAndWait()
+                        # [핵심] espeak의 출력을 aplay로 넘겨서 USB 스피커로 강제 출력
+                        # -v ko: 한국어, -s 160: 속도, --stdout: 소리를 데이터로 출력
+                        tts_cmd = f"espeak -v ko -s 160 '{clean_msg}' --stdout | aplay -q -D plughw:{AUDIO_CARD_ID},0"
+                        os.system(tts_cmd)
                         time.sleep(0.2)
                     except Exception as e:
-                        print(f"TTS Speak Error: {e}")
+                        print(f"TTS Cmd Error: {e}")
 
             is_audio_busy = False
             audio_queue.task_done()
@@ -182,7 +146,6 @@ def audio_processing_thread():
         except Exception as e:
             print(f"Audio Thread Error: {e}")
             is_audio_busy = False
-
 
 # ---- 거리 측정 ----
 def read_distance():
@@ -204,9 +167,8 @@ def read_distance():
         else: return None
     except: return None
 
-
 # =========================================================
-# 안전 로직 및 모터 속도 계산 함수
+# 안전 로직 (Logic)
 # =========================================================
 def process_safety_logic(
     current_time, current_pedal, last_pedal, last_time,
@@ -214,9 +176,7 @@ def process_safety_logic(
     lock_active, msg_expiry, last_transient_msg,
     press_timestamps, prev_over_90, prev_front_danger, last_pedal_active_time
 ):
-    target_speed = 0
-    trigger_siren = False
-    frame_reason = None
+    target_speed = 0; trigger_siren = False; frame_reason = None
     current_angular_velocity = 0.0
     
     front_danger = False
@@ -225,14 +185,12 @@ def process_safety_logic(
 
     if lock_active:
         target_speed = SAFETY_SPEED
-        if current_pedal > 0:
-            frame_reason = "⚠️ 엑셀에서 발을 먼저 떼세요!"
+        if current_pedal > 0: frame_reason = "⚠️ 엑셀에서 발을 먼저 떼세요!"
         else:
             if is_btn_pressed:
                 lock_active = False; msg_expiry = 0
                 frame_reason = None; target_speed = 0
-            else:
-                frame_reason = "🔵 푸쉬버튼을 눌러 제한을 해제하세요"
+            else: frame_reason = "🔵 푸쉬버튼을 눌러 제한을 해제하세요"
 
     elif front_danger:
         frame_reason = "⚠️ 전방을 주의하세요!"
@@ -248,7 +206,6 @@ def process_safety_logic(
             current_angular_velocity = angular_velocity
             
             trigger_event = False; event_msg = ""
-
             if angular_velocity >= CRITICAL_ANGULAR_VELOCITY:
                 trigger_event = True; event_msg = "⚠️ 급발진 감지!"
             
@@ -256,17 +213,13 @@ def process_safety_logic(
             if is_over_90 and not prev_over_90: press_timestamps.append(current_time)
             while press_timestamps and press_timestamps[0] < current_time - RAPID_PRESS_WINDOW:
                 press_timestamps.popleft()
-            
             if len(press_timestamps) >= RAPID_PRESS_COUNT:
                 trigger_event = True; event_msg = "🚫 과속 페달 연타!"; press_timestamps.clear()
-            
             prev_over_90 = is_over_90
 
             if trigger_event:
-                lock_active = True
-                trigger_siren = True
-                msg_expiry = current_time + 5.0
-                last_transient_msg = event_msg
+                lock_active = True; trigger_siren = True
+                msg_expiry = current_time + 5.0; last_transient_msg = event_msg
             else:
                 if current_pedal > 0:
                     last_pedal_active_time = current_time
@@ -289,7 +242,6 @@ def process_safety_logic(
         "prev_front_danger": front_danger, "last_pedal_active_time": last_pedal_active_time
     }
 
-
 # ---- 메인 하드웨어 루프 ----
 def hardware_loop():
     global current_duty, current_pedal_raw, current_safety_reason, current_remaining_time, stop_threads, is_audio_busy
@@ -306,14 +258,9 @@ def hardware_loop():
     GPIO.output(IN1_PIN, True); GPIO.output(IN2_PIN, False)
     GPIO.output(IN3_PIN, True); GPIO.output(IN4_PIN, False)
     
-    press_timestamps = deque()
-    last_pedal_value = 0; last_time = time.time()
-    
-    state = {
-        "lock_active": False, "msg_expiry": 0.0, "last_transient_msg": None,
-        "prev_over_90": False, "prev_front_danger": False,
-        "last_pedal_active_time": time.time()
-    }
+    press_timestamps = deque(); last_pedal_value = 0; last_time = time.time()
+    state = { "lock_active": False, "msg_expiry": 0.0, "last_transient_msg": None,
+              "prev_over_90": False, "prev_front_danger": False, "last_pedal_active_time": time.time() }
 
     last_enqueued_reason = None
     ser = None
@@ -347,8 +294,7 @@ def hardware_loop():
                 if len(dist_history) > 0: final_dist = sum(dist_history) / len(dist_history)
 
                 is_btn_pressed = False
-                if PLATFORM == "LINUX":
-                    is_btn_pressed = (GPIO.input(BUTTON_PIN) == 0)
+                if PLATFORM == "LINUX": is_btn_pressed = (GPIO.input(BUTTON_PIN) == 0)
 
                 result = process_safety_logic(
                     current_time, current_pedal_value, last_pedal_value, last_time,
@@ -361,12 +307,9 @@ def hardware_loop():
                 
                 should_speak = False
                 if new_reason is not None:
-                    if new_reason != last_enqueued_reason:
-                        should_speak = True
-                    if result["trigger_siren"]: 
-                        should_speak = True
-                else:
-                    last_enqueued_reason = None
+                    if new_reason != last_enqueued_reason: should_speak = True
+                    if result["trigger_siren"]: should_speak = True
+                else: last_enqueued_reason = None
 
                 if should_speak:
                     audio_task = {"msg": new_reason, "siren": result["trigger_siren"]}
@@ -376,35 +319,25 @@ def hardware_loop():
                 if is_audio_busy:
                     if current_safety_reason is None and new_reason is not None:
                          current_safety_reason = new_reason
-                else:
-                    current_safety_reason = new_reason
+                else: current_safety_reason = new_reason
 
                 state.update({
-                    "lock_active": result["lock_active"],
-                    "msg_expiry": result["msg_expiry"],
-                    "last_transient_msg": result["last_transient_msg"],
-                    "prev_over_90": result["prev_over_90"],
-                    "prev_front_danger": result["prev_front_danger"],
-                    "last_pedal_active_time": result["last_pedal_active_time"]
+                    "lock_active": result["lock_active"], "msg_expiry": result["msg_expiry"],
+                    "last_transient_msg": result["last_transient_msg"], "prev_over_90": result["prev_over_90"],
+                    "prev_front_danger": result["prev_front_danger"], "last_pedal_active_time": result["last_pedal_active_time"]
                 })
                 
                 target_speed = result["target_speed"]
-                pwm_a.ChangeDutyCycle(target_speed)
-                pwm_b.ChangeDutyCycle(target_speed)
+                pwm_a.ChangeDutyCycle(target_speed); pwm_b.ChangeDutyCycle(target_speed)
                 current_duty = target_speed
 
                 data_queue.put({
-                    "t": current_time * 1000,
-                    "p": current_pedal_value,
-                    "d": current_duty,
-                    "v": result["angular_velocity"],
-                    "dist": round(final_dist, 1),
-                    "r": 1 if (state["lock_active"] or result["prev_front_danger"]) else 0,
-                    "pc": len(press_timestamps)
+                    "t": current_time * 1000, "p": current_pedal_value, "d": current_duty,
+                    "v": result["angular_velocity"], "dist": round(final_dist, 1),
+                    "r": 1 if (state["lock_active"] or result["prev_front_danger"]) else 0, "pc": len(press_timestamps)
                 })
 
-                last_pedal_value = current_pedal_value
-                last_time = current_time
+                last_pedal_value = current_pedal_value; last_time = current_time
             
             time.sleep(0.01)
 
@@ -431,13 +364,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 except: break
             
             payload = {
-                "type": "batch",
-                "history": history_batch,
+                "type": "batch", "history": history_batch,
                 "current": {
-                    "duty": round(current_duty, 1),
-                    "pedal": current_pedal_raw,
-                    "reason": current_safety_reason,
-                    "remaining_time": current_remaining_time
+                    "duty": round(current_duty, 1), "pedal": current_pedal_raw,
+                    "reason": current_safety_reason, "remaining_time": current_remaining_time
                 }
             }
             await websocket.send_json(payload)
