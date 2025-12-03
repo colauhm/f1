@@ -37,13 +37,12 @@ app.mount("/static", StaticFiles(directory="."), name="static")
 router = APIRouter(prefix="/ws")
 
 # ---- 2. 핀 설정 ----
-# 기존 핀
 PWM_A_PIN = 13; IN1_PIN = 23; IN2_PIN = 24
 PWM_B_PIN = 12; IN3_PIN = 5; IN4_PIN = 6
 TRIG_PIN = 27; ECHO_PIN = 17 
 BUTTON_PIN = 21 # 안전 해제 버튼
 
-# [추가] 기어 변속 버튼 핀
+# [기어 변속 버튼]
 BTN_DRIVE_PIN = 16  # Drive 모드 버튼
 BTN_PARK_PIN = 20   # Park 모드 버튼
 
@@ -54,10 +53,13 @@ PEDAL_TOTAL_ANGLE = 45.0
 CRITICAL_ANGULAR_VELOCITY = 420
 RAPID_PRESS_COUNT = 3      
 RAPID_PRESS_WINDOW = 2.0   
-SAFETY_SPEED = 20
-IDLE_SPEED = 20       # D모드 기본 속도 (크리핑)
-IDLE_TIMEOUT = 5.0
+SAFETY_SPEED = 20     # 안전 제한 걸렸을 때 속도
 COLLISION_DIST_LIMIT = 100.0 
+
+# [수정] D모드 최소 속도 30km/h 설정을 위한 최소 Duty 값
+# 30km/h ≈ 250 RPM ≈ Duty 19% (Max 1350 RPM, 둘레 2m 기준)
+IDLE_DUTY = 19.0      
+IDLE_TIMEOUT = 5.0
 
 # [가감속 반응성]
 ACCEL_STEP = 1.5
@@ -78,8 +80,8 @@ current_remaining_time = 0
 stop_threads = False
 is_audio_busy = False
 
-# [추가] 운전 모드 상태 ('P', 'D') - 초기값은 P(파킹)
-drive_mode = 'P' 
+# [수정] 초기 상태는 N (Neutral)
+drive_mode = 'N' 
 
 # 변속기 상태
 virtual_gear = 1
@@ -185,12 +187,12 @@ def process_safety_logic(
     final_dist, is_btn_pressed,
     lock_active, msg_expiry, last_transient_msg,
     press_timestamps, prev_over_90, prev_front_danger, last_pedal_active_time,
-    current_drive_mode  # [추가] 현재 기어 모드(P/D)
+    current_drive_mode
 ):
     target_speed = 0; trigger_siren = False; frame_reason = None
     current_angular_velocity = 0.0
     
-    # 1. Park 모드일 경우: 무조건 정지, 로직 무시
+    # [1] Park(P) 또는 Neutral(N) 처리
     if current_drive_mode == 'P':
         return {
             "target_speed": 0, "logical_reason": "🅿️ 주차 상태 (P)",
@@ -200,9 +202,21 @@ def process_safety_logic(
             "prev_front_danger": False, "last_pedal_active_time": current_time,
             "visual_gear": "P"
         }
+    
+    if current_drive_mode == 'N':
+        # N 상태에서는 속도(target_speed)는 0이지만, 엑셀 밟으면 RPM만 올라가도록
+        # 0을 리턴하되, 메인 루프에서 RPM 계산에 페달 값을 씀
+        return {
+            "target_speed": 0, "logical_reason": "Neutral (공회전)",
+            "trigger_siren": False, "angular_velocity": 0,
+            "lock_active": False, "msg_expiry": 0,
+            "last_transient_msg": None, "prev_over_90": False,
+            "prev_front_danger": False, "last_pedal_active_time": current_time,
+            "visual_gear": "N"
+        }
 
-    # --- 이하 Drive(D) 모드 로직 ---
-    visual_gear = "D" # 기본 표시는 D
+    # [2] Drive(D) 모드 로직
+    visual_gear = "D" 
 
     front_danger = False
     if final_dist > 0 and final_dist <= COLLISION_DIST_LIMIT and current_pedal > 0:
@@ -210,12 +224,12 @@ def process_safety_logic(
 
     if lock_active:
         target_speed = SAFETY_SPEED 
-        visual_gear = "N" # [요구사항] 제한 시 N으로 표시
+        visual_gear = "N" # 안전 제한 시 강제로 N 표시
         if current_pedal > 0: frame_reason = "⚠️ 엑셀에서 발을 먼저 떼세요!"
         else:
             if is_btn_pressed:
                 lock_active = False; msg_expiry = 0
-                frame_reason = None; target_speed = IDLE_SPEED # 해제되면 바로 아이들링
+                frame_reason = None; target_speed = IDLE_DUTY 
             else: frame_reason = "🔵 푸쉬버튼을 눌러 제한을 해제하세요"
 
     elif front_danger:
@@ -247,15 +261,14 @@ def process_safety_logic(
                 lock_active = True; trigger_siren = True
                 msg_expiry = current_time + 5.0; last_transient_msg = event_msg
                 target_speed = SAFETY_SPEED
-                visual_gear = "N" # 제한 걸림 -> N 표시
+                visual_gear = "N" # 제한 걸림 -> N
             else:
-                # [Drive 모드 정상 주행]
-                # 페달 안 밟아도 최소 20%(IDLE) 유지 (오토 차량 특성)
+                # [수정] D모드: 엑셀 안 밟아도 30km/h(IDLE_DUTY) 유지
                 if current_pedal > 0:
                     last_pedal_active_time = current_time
-                    target_speed = max(current_pedal, IDLE_SPEED)
+                    target_speed = max(current_pedal, IDLE_DUTY)
                 else:
-                    target_speed = IDLE_SPEED # 엑셀 떼도 크리핑
+                    target_speed = IDLE_DUTY # 크리핑 속도
 
     logical_reason = None
     if current_time < msg_expiry and last_transient_msg is not None:
@@ -306,7 +319,6 @@ def hardware_loop():
     GPIO.setup(PWM_B_PIN, GPIO.OUT); GPIO.setup(IN3_PIN, GPIO.OUT); GPIO.setup(IN4_PIN, GPIO.OUT)
     if PLATFORM == "LINUX": 
         GPIO.setup(TRIG_PIN, GPIO.OUT); GPIO.setup(ECHO_PIN, GPIO.IN)
-        # [추가] 버튼 셋업
         GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
         GPIO.setup(BTN_DRIVE_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
         GPIO.setup(BTN_PARK_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
@@ -333,10 +345,17 @@ def hardware_loop():
 
             # 2. 버튼 입력 감지 (P / D 모드 전환)
             if PLATFORM == "LINUX":
+                # [디버깅] 버튼 눌림 확인 로그
                 if GPIO.input(BTN_DRIVE_PIN) == 0:
-                    drive_mode = 'D'
-                elif GPIO.input(BTN_PARK_PIN) == 0:
-                    drive_mode = 'P'
+                    if drive_mode != 'D': 
+                        print("👉 Drive Button Pressed!")
+                        drive_mode = 'D'
+                
+                # if 대신 elif를 쓰지 않고 개별 if로 체크하여 P 버튼 씹힘 방지
+                if GPIO.input(BTN_PARK_PIN) == 0:
+                    if drive_mode != 'P':
+                        print("👉 Park Button Pressed!")
+                        drive_mode = 'P'
             
             # 3. 페달 값 읽기
             if ser and ser.in_waiting > 0:
@@ -366,9 +385,13 @@ def hardware_loop():
                 final_dist, is_btn_pressed,
                 state["lock_active"], state["msg_expiry"], state["last_transient_msg"],
                 press_timestamps, state["prev_over_90"], state["prev_front_danger"], state["last_pedal_active_time"],
-                drive_mode # 현재 모드 전달
+                drive_mode 
             )
             
+            # 안전 제한 걸리면 자동으로 N으로 변경
+            if result["lock_active"] and drive_mode == 'D':
+                drive_mode = 'N'
+
             target_raw = float(result["target_speed"])
             visual_gear = result["visual_gear"]
             
@@ -383,10 +406,17 @@ def hardware_loop():
                     smoothed_duty -= DECEL_STEP
                     if smoothed_duty < target_raw: smoothed_duty = target_raw
             
-            # 8. 변속 시뮬레이션 (RPM 계산)
-            gear_num, rpm = simulate_transmission(smoothed_duty, current_time)
+            # 8. 변속 시뮬레이션 및 RPM 계산
+            # 실제 모터 Duty는 target_raw를 따라가지만,
+            # N 모드일 때는 소리/게이지용 RPM을 위해 페달값을 시뮬레이션 함수에 넣음
             
-            # P모드면 RPM도 0
+            sim_duty_input = smoothed_duty
+            if visual_gear == 'N':
+                sim_duty_input = current_pedal_raw # N일 땐 페달 밟은 만큼 RPM 상승 (공회전)
+
+            gear_num, rpm = simulate_transmission(sim_duty_input, current_time)
+            
+            # P 모드일 때는 RPM도 0
             if visual_gear == 'P': 
                 rpm = 0
                 gear_num = 1
@@ -418,7 +448,6 @@ def hardware_loop():
                 "prev_front_danger": result["prev_front_danger"], "last_pedal_active_time": result["last_pedal_active_time"]
             })
             
-            # [수정] 프론트엔드로 visual_gear ('P', 'N', 'D') 전송
             data_queue.put({
                 "t": current_time * 1000, "p": current_pedal_raw, "d": current_duty,
                 "v": result["angular_velocity"], "dist": round(final_dist, 1),
@@ -426,7 +455,7 @@ def hardware_loop():
                 "pc": len(press_timestamps),
                 "rpm": rpm, 
                 "gear": gear_num,
-                "v_gear_char": visual_gear # 화면 표시용 기어 문자
+                "v_gear_char": visual_gear 
             })
 
             last_pedal_value = current_pedal_raw; last_time = current_time
@@ -454,11 +483,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 try: history_batch.append(data_queue.get_nowait())
                 except: break
             
-            last_rpm = 0; last_gear = 1; last_v_gear = 'P'
+            last_rpm = 0; last_gear = 1; last_v_gear = 'N'
             if history_batch:
                 last_rpm = history_batch[-1].get("rpm", 0)
                 last_gear = history_batch[-1].get("gear", 1)
-                last_v_gear = history_batch[-1].get("v_gear_char", 'P')
+                last_v_gear = history_batch[-1].get("v_gear_char", 'N')
 
             payload = {
                 "type": "batch", "history": history_batch,

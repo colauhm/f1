@@ -106,12 +106,10 @@ window.setTimeMode = function(seconds) {
     requestAnimationFrame(updateChartScale);
 };
 
-// [함수 추가] 기어 스트립 불 켜기
 function updateGearStrip(char) {
-    // 1. 모든 불 끄기
     document.querySelectorAll('.gear-item').forEach(el => el.classList.remove('active'));
     
-    // 2. 해당 문자 불 켜기
+    // N, P, D만 존재
     const targetId = 'g-' + char.toLowerCase();
     const targetEl = document.getElementById(targetId);
     if(targetEl) targetEl.classList.add('active');
@@ -126,24 +124,27 @@ ws.onmessage = (event) => {
         if (current.duty !== undefined) {
             const duty = parseFloat(current.duty);
             
+            // 게이지 바늘
             let angle = (duty * 1.8) - 90;
             if (angle < -90) angle = -90; if (angle > 90) angle = 90;
             needle.style.transform = `rotate(${angle}deg)`;
 
             const backendRpm = current.rpm || 0;
             const backendGear = current.gear || 1;
-            const vGear = current.v_gear || 'P'; // 시각적 기어 (P, N, D)
+            const vGear = current.v_gear || 'N'; // 기본값 N
 
             const currentSpeed = backendRpm * TIRE_CIRCUM * 0.06;
 
+            // N 모드일 때는 엑셀 밟아서 RPM 올라가도 실제 속도는 0으로 표시 (공회전)
+            let displaySpeed = currentSpeed;
+            if(vGear === 'N' || vGear === 'P') displaySpeed = 0;
+
             rpmText.innerText = backendRpm; 
-            speedText.innerText = Math.round(currentSpeed);
+            speedText.innerText = Math.round(displaySpeed);
             
-            // 하단 텍스트는 상세 정보 표시 (P, N, D1, D2...)
             if(vGear === 'D') gearText.innerText = "D" + backendGear;
             else gearText.innerText = vGear;
 
-            // [추가] 세로 기어 스트립 업데이트
             updateGearStrip(vGear);
         }
 
