@@ -4,8 +4,12 @@ var wsAddress = protocol + location.host + "/ws";
 
 const ws = new WebSocket(wsAddress);
 
+const MAX_RPM = 1350; // 모터 최대 RPM
+const TIRE_CIRCUMFERENCE = 2.0; // 타이어 둘레 (미터, 일반 승용차 기준)
+
 const needle = document.getElementById("needle");
-const valText = document.getElementById("duty-val");
+const rpmText = document.getElementById("rpm-val");
+const speedText = document.getElementById("speed-val");
 const warningBox = document.getElementById("warning-dialog");
 const warningText = document.getElementById("warning-text");
 const valVelocity = document.getElementById("val-velocity");
@@ -129,10 +133,22 @@ ws.onmessage = (event) => {
         // 1. 게이지
         if (current.duty !== undefined) {
             const duty = parseFloat(current.duty);
-            valText.innerText = duty.toFixed(0);
+            
+            // (1) 바늘 각도 계산 (기존 로직 유지: 0~100%를 -90~90도로 매핑)
             let angle = (duty * 1.8) - 90;
-            if (angle < -90) angle = -90; if (angle > 90) angle = 90;
+            if (angle < -90) angle = -90; 
+            if (angle > 90) angle = 90;
             needle.style.transform = `rotate(${angle}deg)`;
+
+            // (2) RPM 계산: (Duty / 100) * MAX_RPM
+            const currentRpm = (duty / 100) * MAX_RPM;
+            
+            // (3) 속도(km/h) 계산: RPM * 둘레(m) * 60(분) / 1000(km)
+            const currentSpeed = currentRpm * TIRE_CIRCUMFERENCE * 0.06;
+
+            // (4) 텍스트 업데이트 (소수점 없이 정수로 표현하거나 toFixed(1))
+            rpmText.innerText = Math.round(currentRpm); 
+            speedText.innerText = currentSpeed.toFixed(0);
         }
 
         // 2. 경고창

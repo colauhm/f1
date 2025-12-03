@@ -16,9 +16,43 @@ h1 { font-weight: 200; margin-bottom: 30px; color: #00d2ff; text-shadow: 0 0 10p
 .gauge-bg { width: 300px; height: 300px; border-radius: 50%; background: conic-gradient(from 180deg, #00ff00 0deg, #ffff00 90deg, #ff0000 180deg); position: absolute; top: 0; left: 0; }
 .gauge-cover { width: 240px; height: 240px; background-color: #111; border-radius: 50%; position: absolute; top: 30px; left: 30px; }
 .needle { width: 4px; height: 130px; background: #fff; position: absolute; bottom: 0; left: 148px; transform-origin: bottom center; transform: rotate(-90deg); border-radius: 50% 50% 0 0; z-index: 10; transition: transform 0.1s linear; }
-.gauge-text { margin-top: 0px; z-index: 20; text-align: center; }
-#duty-val { font-size: 4rem; font-weight: bold; color: #fff; }
-.unit { font-size: 1.5rem; color: #888; }
+/* style.css 의 .gauge-text 관련 부분 수정 */
+
+.gauge-text { 
+    margin-top: 10px; /* 간격 조정 */
+    z-index: 20; 
+    text-align: center; 
+    display: flex;
+    flex-direction: column;
+    gap: 5px; /* RPM과 km/h 사이 간격 */
+}
+
+.gauge-info-row {
+    display: flex;
+    justify-content: center;
+    align-items: baseline;
+    gap: 5px;
+}
+
+.digital-val {
+    font-family: 'Segoe UI', monospace; /* 숫자 등폭 폰트 추천 */
+    font-size: 1.8rem; 
+    font-weight: bold; 
+    color: #888; /* RPM은 약간 어둡게 */
+}
+
+/* 속도(km/h)는 더 크고 밝게 강조 */
+.digital-val.highlight {
+    font-size: 2.5rem;
+    color: #fff;
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+}
+
+.unit { 
+    font-size: 1.0rem; 
+    color: #666; 
+    font-weight: normal;
+}
 
 /* 상태 정보 박스 */
 .status-info-box { width: 300px; box-sizing: border-box; text-align: left; }
