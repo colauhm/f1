@@ -81,48 +81,43 @@ data_queue = queue.Queue()
 # 아이템 형식: {"type": "alert", "msg": "경고문구", "siren": True/False}
 audio_queue = queue.Queue()
 
+# ... (상단 import 부분 동일) ...
+
 # =========================================================
-# [통합] 오디오 처리 스레드 (사이렌 -> TTS 순차 실행)
+# [수정됨] 오디오 처리 스레드 (충돌 방지 로직 적용)
 # =========================================================
 def audio_processing_thread():
     global is_audio_busy
     
-    # TTS 엔진 초기화 및 목소리 강제 설정
+    # 1. TTS 엔진 초기화
     engine = None
     try:
-        # 드라이버를 명시적으로 'espeak'로 지정
+        # espeak 드라이버 지정
         engine = pyttsx3.init(driverName='espeak')
         
-        # [핵심 수정] 사용 가능한 목소리 리스트를 가져와서 유효한 것으로 설정
+        # 목소리 설정 (한국어 우선, 없으면 첫 번째)
         voices = engine.getProperty('voices')
-        
         selected_voice = None
-        
-        # 1순위: 한국어 목소리 찾기
         for v in voices:
             if 'korea' in v.name.lower() or 'ko' in v.languages:
                 selected_voice = v.id
                 break
-        
-        # 2순위: 한국어가 없으면 그냥 첫 번째 목소리 사용 (에러 방지용)
         if selected_voice is None and len(voices) > 0:
             selected_voice = voices[0].id
             
-        # 목소리 설정 적용
         if selected_voice:
             engine.setProperty('voice', selected_voice)
         
-        # 말하기 속도 설정
+        # 말하기 속도
         rate = engine.getProperty('rate')
         engine.setProperty('rate', rate + 20) 
 
     except Exception as e:
         print(f"TTS Init Failed: {e}")
-        # 엔진 초기화 실패 시 engine을 None으로 둬서 아래 로직이 무시되게 함
         engine = None
 
-    # 사이렌 소리 데이터 미리 생성 (최적화)
-    sample_rate = 48000
+    # 2. 사이렌 소리 데이터 생성
+    sample_rate = 44100 # 48000에서 44100으로 변경 (호환성 높임)
     beep_freq = 600
     beep_duration = 0.3
     silence_duration = 0.2
@@ -131,6 +126,7 @@ def audio_processing_thread():
     t_beep = np.linspace(0, beep_duration, int(sample_rate * beep_duration), endpoint=False)
     beep_wave = np.sign(np.sin(2 * np.pi * beep_freq * t_beep)).astype(np.float32)
     silence_wave = np.zeros(int(sample_rate * silence_duration), dtype=np.float32)
+    # 볼륨을 50%로 낮춰서 생성 (클리핑 방지)
     full_siren_wave = np.concatenate([beep_wave, silence_wave] * repeats) * 0.5
 
     while not stop_threads:
@@ -138,16 +134,19 @@ def audio_processing_thread():
             task = audio_queue.get(timeout=1)
             is_audio_busy = True
             
+            # [수정 1] amixer(볼륨조절) 코드 삭제 -> 충돌 원인 제거
+            
             # 1. 사이렌 재생
             if task.get("siren", False):
                 try:
-                    sd.default.device = AUDIO_CARD_ID
-                    os.system(f"amixer -c {AUDIO_CARD_ID} set PCM 80% > /dev/null 2>&1")
+                    # 장치 ID 명시적 지정 대신 default 사용
                     sd.play(full_siren_wave, sample_rate, blocking=True)
+                    # [수정 2] 재생 후 잠시 대기 (오디오 장치 해제 시간 확보)
+                    time.sleep(0.5)
                 except Exception as e:
                     print(f"Siren Error: {e}")
 
-            # 2. TTS 말하기 (엔진이 정상 초기화되었을 때만)
+            # 2. TTS 말하기
             msg = task.get("msg", "")
             if msg and engine:
                 clean_msg = msg.replace("⚠️", "").replace("🚫", "").replace("🔵", "").strip()
@@ -155,6 +154,8 @@ def audio_processing_thread():
                     try:
                         engine.say(clean_msg)
                         engine.runAndWait()
+                        # [수정 3] 말하기 후에도 잠시 대기
+                        time.sleep(0.2)
                     except Exception as e:
                         print(f"TTS Speak Error: {e}")
 
@@ -167,27 +168,7 @@ def audio_processing_thread():
             print(f"Audio Thread Error: {e}")
             is_audio_busy = False
 
-
-# ---- 거리 측정 ----
-def read_distance():
-    if PLATFORM == "WINDOWS": return 50 + 60 * np.sin(time.time()) + np.random.randint(-2, 2)
-    try:
-        GPIO.output(TRIG_PIN, False); time.sleep(0.000005)
-        GPIO.output(TRIG_PIN, True); time.sleep(0.00001)
-        GPIO.output(TRIG_PIN, False)
-        start_time = time.time(); stop_time = time.time(); timeout = start_time + 0.04
-        while GPIO.input(ECHO_PIN) == 0:
-            start_time = time.time()
-            if start_time > timeout: return None
-        while GPIO.input(ECHO_PIN) == 1:
-            stop_time = time.time()
-            if stop_time > timeout: return None
-        elapsed = stop_time - start_time
-        distance = (elapsed * 34300) / 2
-        if 2 < distance < 400: return distance
-        else: return None
-    except: return None
-
+# ... (나머지 코드 동일) ...
 
 # =========================================================
 # 안전 로직 및 모터 속도 계산 함수 (순수 로직)
