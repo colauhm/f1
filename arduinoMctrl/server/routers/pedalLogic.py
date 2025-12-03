@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 import os
 import numpy as np
 import wave
+import subprocess # [추가] 외부 명령어 실행 및 결과 확인용
 
 # ---- 1. 하드웨어 설정 ----
 try:
@@ -65,10 +66,31 @@ dist_history = deque(maxlen=10)
 data_queue = queue.Queue()
 audio_queue = queue.Queue()
 
+# ---- [핵심] USB 오디오 카드 번호 찾기 (자동) ----
+def get_usb_card_number():
+    """aplay -l 명령어를 분석해서 USB Audio의 카드 번호를 찾음"""
+    try:
+        # aplay -l 실행 결과 가져오기
+        result = subprocess.check_output("aplay -l", shell=True).decode()
+        for line in result.split('\n'):
+            if "USB" in line and "card" in line:
+                # 예: card 1: Device ... -> '1' 추출
+                parts = line.split(":")
+                card_part = parts[0] # card 1
+                card_num = card_part.replace("card", "").strip()
+                return card_num
+        return None # 못 찾으면 None
+    except:
+        return None
+
+# 시작 시 카드 번호 탐색
+USB_CARD_NUM = get_usb_card_number()
+print(f"Detected USB Card Number: {USB_CARD_NUM}")
+
+
 # ---- 사이렌 WAV 파일 생성 ----
 def generate_siren_file(filename="/tmp/siren.wav"):
     try:
-        # 표준 44100Hz 사용
         sample_rate = 44100
         duration = 1.5 
         freq = 600
@@ -81,30 +103,33 @@ def generate_siren_file(filename="/tmp/siren.wav"):
         with wave.open(filename, 'w') as wf:
             wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(sample_rate)
             wf.writeframes(wave_data.tobytes())
-        print("Siren WAV generated.")
     except Exception as e:
         print(f"Siren Gen Error: {e}")
 
-# 시작 시 파일 생성
 generate_siren_file()
 
 # =========================================================
-# [최종 수정] 오디오 처리 스레드 (단순화 버전)
+# [최종 수정] 오디오 처리 스레드 (자동 카드 감지 적용)
 # =========================================================
 def audio_processing_thread():
-    global is_audio_busy
+    global is_audio_busy, USB_CARD_NUM
     
     while not stop_threads:
         try:
             task = audio_queue.get(timeout=1)
             is_audio_busy = True
             
+            # USB 카드가 감지되었으면 강제 지정, 아니면 기본값(default) 사용
+            device_flag = ""
+            if USB_CARD_NUM is not None:
+                # plughw:X,0 형태로 강제 지정
+                device_flag = f"-D plughw:{USB_CARD_NUM},0"
+
             # 1. 사이렌 재생
             if task.get("siren", False):
                 try:
-                    # [핵심 변경] -D plughw... 옵션 삭제! 시스템 기본 장치 사용
-                    # -q: 로그 출력 끄기
-                    os.system("aplay -q /tmp/siren.wav")
+                    cmd = f"aplay -q {device_flag} /tmp/siren.wav"
+                    os.system(cmd)
                     time.sleep(0.1)
                 except Exception as e:
                     print(f"Siren Cmd Error: {e}")
@@ -115,9 +140,8 @@ def audio_processing_thread():
                 clean_msg = msg.replace("⚠️", "").replace("🚫", "").replace("🔵", "").strip()
                 if clean_msg:
                     try:
-                        # [핵심 변경] -D plughw... 삭제
-                        # espeak 결과를 바로 aplay로 넘김 (OS가 알아서 믹싱함)
-                        tts_cmd = f"espeak -v ko -s 160 '{clean_msg}' --stdout | aplay -q"
+                        # espeak -> aplay
+                        tts_cmd = f"espeak -v ko -s 160 '{clean_msg}' --stdout | aplay -q {device_flag}"
                         os.system(tts_cmd)
                         time.sleep(0.1)
                     except Exception as e:
