@@ -74,7 +74,7 @@ SHIFT_DELAY_TIME = 0.2
 current_duty = 0.0          
 target_duty_raw = 0.0       
 current_pedal_raw = 0
-current_safety_reason = None # 현재 화면에 표시 중인 경고 문구
+current_safety_reason = None 
 current_remaining_time = 0
 stop_threads = False
 
@@ -113,14 +113,11 @@ print(f"Detected USB Card Number: {USB_CARD_NUM}")
 def generate_chime_file(filename="/tmp/chime.wav"):
     try:
         sample_rate = 44100
-        duration = 0.8  # 소리 길이
+        duration = 0.8  
         t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
-        
-        # 부드러운 띵~ 소리
-        freq = 880 # A5
+        freq = 880 
         decay = np.exp(-3 * t)
         wave_data = 0.5 * np.sin(2 * np.pi * freq * t) * decay
-        
         wave_data = (wave_data * 32767).astype(np.int16)
         with wave.open(filename, 'w') as wf:
             wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(sample_rate)
@@ -135,13 +132,11 @@ def audio_processing_thread():
     global is_warning_sound_active, stop_threads, USB_CARD_NUM
     
     while not stop_threads:
-        # 경고 상태일 때만 소리 재생
         if is_warning_sound_active:
             try:
                 device_flag = ""
                 if USB_CARD_NUM is not None:
                     device_flag = f"-D plughw:{USB_CARD_NUM},0"
-                
                 cmd = f"aplay -q {device_flag} /tmp/chime.wav"
                 os.system(cmd)
                 time.sleep(0.5) 
@@ -184,43 +179,43 @@ def process_safety_logic(
     target_speed = 0; frame_reason = None
     current_angular_velocity = 0.0
     trigger_sound = False
-    visual_gear = current_drive_mode # 기본값
+    visual_gear = current_drive_mode 
+    unlock_success = False # [NEW] 해제 성공 여부 플래그
     
-    # [1] Park(P) - 최우선, 로직 중단
+    # [1] Park(P)
     if current_drive_mode == 'P':
         return {
             "target_speed": 0, "logical_reason": None,
             "trigger_sound": False, "angular_velocity": 0,
             "lock_active": False, "pedal_error_expiry": 0,
             "prev_over_90": False, "prev_front_danger": False, 
-            "last_pedal_active_time": current_time, "visual_gear": "P"
+            "last_pedal_active_time": current_time, "visual_gear": "P",
+            "unlock_success": False
         }
     
-    # [2] 안전 제한 (Lock Active) - [수정] N체크보다 먼저 와야 함!
-    # Lock이 걸리면 기어가 N으로 바뀌더라도 경고창은 유지되어야 함
+    # [2] 안전 제한 (Lock Active)
     if lock_active:
-        target_speed = SAFETY_SPEED 
-        visual_gear = "N" # 화면엔 N으로 표시
-        trigger_sound = True # 소리 계속 재생
+        target_speed = 0 # [수정] 모터 제한 시 속도 0으로 설정
+        visual_gear = "N" 
+        trigger_sound = True 
         
         # [우선순위 로직]
-        # 1. 3초간 "페달 오조작 감지" 강제 표시
         if current_time < pedal_error_expiry:
             frame_reason = "⚠️ 페달 오조작 감지!"
         else:
-            # 2. 3초 후 -> 복구 안내 메시지
             if current_pedal > 0:
                 frame_reason = "⚠️ 엑셀에서 발을 먼저 떼세요!"
             else:
                 if is_btn_pressed:
                     # [해제 조건 충족]
                     lock_active = False; pedal_error_expiry = 0
-                    frame_reason = None; target_speed = IDLE_DUTY
-                    trigger_sound = False # 소리 끔
+                    frame_reason = None; 
+                    target_speed = IDLE_DUTY # 해제되는 순간 IDLE 속도로
+                    trigger_sound = False 
+                    unlock_success = True # [핵심] 해제 성공 신호 보냄
                 else:
                     frame_reason = "🔵 해제버튼(21번)을 누르세요"
 
-        # Lock 상태일 때는 아래 N모드나 D모드 로직을 타지 않고 바로 리턴
         return {
             "target_speed": target_speed, "logical_reason": frame_reason,
             "trigger_sound": trigger_sound,
@@ -228,24 +223,25 @@ def process_safety_logic(
             "lock_active": lock_active, "pedal_error_expiry": pedal_error_expiry,
             "prev_over_90": prev_over_90,
             "prev_front_danger": prev_front_danger, "last_pedal_active_time": last_pedal_active_time,
-            "visual_gear": visual_gear
+            "visual_gear": visual_gear,
+            "unlock_success": unlock_success
         }
     
-    # [3] Neutral(N) - Lock이 아닐 때만 유효
+    # [3] Neutral(N)
     if current_drive_mode == 'N':
         return {
             "target_speed": 0, "logical_reason": None,
             "trigger_sound": False, "angular_velocity": 0,
             "lock_active": False, "pedal_error_expiry": 0,
             "prev_over_90": False, "prev_front_danger": False,
-            "last_pedal_active_time": current_time, "visual_gear": "N"
+            "last_pedal_active_time": current_time, "visual_gear": "N",
+            "unlock_success": False
         }
 
-    # [4] Drive(D) - 정상 주행
+    # [4] Drive(D)
     visual_gear = "D" 
     front_danger = False
     
-    # 전방 감지
     if final_dist > 0 and final_dist <= COLLISION_DIST_LIMIT and current_pedal > 0:
         front_danger = True
 
@@ -277,8 +273,7 @@ def process_safety_logic(
                 # [잠금 시작]
                 lock_active = True
                 pedal_error_expiry = current_time + 3.0
-                
-                target_speed = SAFETY_SPEED
+                target_speed = 0 # [수정] 잠금 시작 시 속도 0
                 visual_gear = "N" 
                 trigger_sound = True
                 frame_reason = "⚠️ 페달 오조작 감지!"
@@ -296,7 +291,8 @@ def process_safety_logic(
         "lock_active": lock_active, "pedal_error_expiry": pedal_error_expiry,
         "prev_over_90": prev_over_90,
         "prev_front_danger": front_danger, "last_pedal_active_time": last_pedal_active_time,
-        "visual_gear": visual_gear
+        "visual_gear": visual_gear,
+        "unlock_success": False
     }
 
 def simulate_transmission(duty_val, current_time):
@@ -399,15 +395,18 @@ def hardware_loop():
                 drive_mode 
             )
             
-            # [잠금 상태 반영]
-            # 안전 제한 걸리면 Drive 모드여도 화면엔 N으로 표시
+            # [잠금 상태 및 자동 D 모드 전환 로직]
             if result["lock_active"] and drive_mode == 'D':
-                drive_mode = 'N'
+                drive_mode = 'N' # 제한 걸리면 N으로
+            
+            # [수정] 해제 성공 시 자동으로 D 모드 전환
+            if result["unlock_success"]:
+                drive_mode = 'D'
+                # 화면 즉시 갱신을 위해 visual_gear 덮어쓰기
+                result["visual_gear"] = 'D'
 
             target_raw = float(result["target_speed"])
             visual_gear = result["visual_gear"]
-            
-            # 소리 제어
             is_warning_sound_active = result["trigger_sound"]
 
             is_shifting = (current_time < shift_pause_timer)
