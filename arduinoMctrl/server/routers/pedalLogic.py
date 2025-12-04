@@ -57,7 +57,7 @@ RAPID_PRESS_WINDOW = 2.0
 SAFETY_SPEED = 20     
 COLLISION_DIST_LIMIT = 100.0 
 
-# [D모드 최소 속도] 20%로 설정
+# [D모드 최소 속도] 20%
 IDLE_DUTY = 20.0      
 IDLE_TIMEOUT = 5.0
 
@@ -81,7 +81,7 @@ stop_threads = False
 
 # [상태 플래그]
 is_warning_sound_active = False 
-safety_mode_enabled = True # 기본값 ON (안전모드 켜짐)
+safety_mode_enabled = True # 기본값 ON
 
 # [초기 상태 N]
 drive_mode = 'N' 
@@ -214,7 +214,6 @@ def process_safety_logic(
         visual_gear = "N" 
         trigger_sound = True 
         
-        # [우선순위 로직]
         if current_time < pedal_error_expiry:
             frame_reason = "⚠️ 페달 오조작 감지!"
         else:
@@ -224,7 +223,7 @@ def process_safety_logic(
                 if is_btn_pressed:
                     lock_active = False; pedal_error_expiry = 0
                     frame_reason = None; 
-                    target_speed = IDLE_DUTY # 해제되면 바로 크리핑
+                    target_speed = IDLE_DUTY 
                     trigger_sound = False 
                     unlock_success = True 
                 else:
@@ -291,7 +290,6 @@ def process_safety_logic(
                 trigger_sound = True
                 frame_reason = "⚠️ 페달 오조작 감지!"
             else:
-                # [D모드 정상 주행] 최소 속도 적용
                 target_speed = max(current_pedal, IDLE_DUTY)
 
     return {
