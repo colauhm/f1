@@ -37,7 +37,7 @@ app.mount("/static", StaticFiles(directory="."), name="static")
 router = APIRouter(prefix="/ws")
 
 # ---- 2. 핀 설정 ----
-PWM_A_PIN = 13; IN1_PIN = 23; IN2_PIN = 24
+PWM_A_PIN = 13; IN1_PIN = 24; IN2_PIN = 23
 PWM_B_PIN = 12; IN3_PIN = 5; IN4_PIN = 6
 TRIG_PIN = 27; ECHO_PIN = 17 
 BUTTON_PIN = 21  # [안전 해제 버튼]
