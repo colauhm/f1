@@ -8,6 +8,9 @@ const rpmText = document.getElementById("rpm-val");
 const speedText = document.getElementById("speed-val");  
 const gearText = document.getElementById("gear-box"); 
 
+// [추가] 안전 모드 박스 엘리먼트
+const safetyValText = document.getElementById("safety-val");
+
 const warningBox = document.getElementById("warning-dialog");
 const warningText = document.getElementById("warning-text");
 const valVelocity = document.getElementById("val-velocity");
@@ -20,7 +23,7 @@ const THRESHOLD_COUNT = 3;
 const COLOR_GREEN = "#39ff14";
 const COLOR_RED = "#ff0000";
 
-const TIRE_CIRCUM = 1.0; 
+const TIRE_CIRCUM = 2.0; 
 
 let pedalBuffer = [], motorBuffer = [], velocityBuffer = [], distanceBuffer = [];
 const MAX_STORE_MINUTES = 1.5; 
@@ -108,8 +111,6 @@ window.setTimeMode = function(seconds) {
 
 function updateGearStrip(char) {
     document.querySelectorAll('.gear-item').forEach(el => el.classList.remove('active'));
-    
-    // N, P, D만 존재
     const targetId = 'g-' + char.toLowerCase();
     const targetEl = document.getElementById(targetId);
     if(targetEl) targetEl.classList.add('active');
@@ -124,18 +125,16 @@ ws.onmessage = (event) => {
         if (current.duty !== undefined) {
             const duty = parseFloat(current.duty);
             
-            // 게이지 바늘
             let angle = (duty * 1.8) - 90;
             if (angle < -90) angle = -90; if (angle > 90) angle = 90;
             needle.style.transform = `rotate(${angle}deg)`;
 
             const backendRpm = current.rpm || 0;
             const backendGear = current.gear || 1;
-            const vGear = current.v_gear || 'N'; // 기본값 N
+            const vGear = current.v_gear || 'N'; 
 
             const currentSpeed = backendRpm * TIRE_CIRCUM * 0.06;
 
-            // N 모드일 때는 엑셀 밟아서 RPM 올라가도 실제 속도는 0으로 표시 (공회전)
             let displaySpeed = currentSpeed;
             if(vGear === 'N' || vGear === 'P') displaySpeed = 0;
 
@@ -146,6 +145,15 @@ ws.onmessage = (event) => {
             else gearText.innerText = vGear;
 
             updateGearStrip(vGear);
+
+            // [NEW] 안전 모드 박스 업데이트
+            if (current.safety_mode) {
+                safetyValText.innerText = "ON";
+                safetyValText.className = "safety-value on";
+            } else {
+                safetyValText.innerText = "OFF";
+                safetyValText.className = "safety-value off";
+            }
         }
 
         if (current.reason) {
