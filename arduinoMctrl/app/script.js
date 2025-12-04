@@ -8,8 +8,9 @@ const rpmText = document.getElementById("rpm-val");
 const speedText = document.getElementById("speed-val");  
 const gearText = document.getElementById("gear-box"); 
 
-// [추가] 안전 모드 박스 엘리먼트
-const safetyValText = document.getElementById("safety-val");
+// [수정] 안전 모드 박스 엘리먼트들
+const safetyLabelOn = document.getElementById("safety-on");
+const safetyLabelOff = document.getElementById("safety-off");
 
 const warningBox = document.getElementById("warning-dialog");
 const warningText = document.getElementById("warning-text");
@@ -148,11 +149,13 @@ ws.onmessage = (event) => {
 
             // [NEW] 안전 모드 박스 업데이트
             if (current.safety_mode) {
-                safetyValText.innerText = "ON";
-                safetyValText.className = "safety-value on";
+                // ON 상태: ON은 형광색(active), OFF는 꺼짐
+                safetyLabelOn.classList.add("active");
+                safetyLabelOff.classList.remove("active");
             } else {
-                safetyValText.innerText = "OFF";
-                safetyValText.className = "safety-value off";
+                // OFF 상태: ON은 꺼짐, OFF는 빨간색(active)
+                safetyLabelOn.classList.remove("active");
+                safetyLabelOff.classList.add("active");
             }
         }
 

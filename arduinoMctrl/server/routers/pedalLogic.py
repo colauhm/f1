@@ -42,11 +42,10 @@ PWM_B_PIN = 12; IN3_PIN = 5; IN4_PIN = 6
 TRIG_PIN = 27; ECHO_PIN = 17 
 BUTTON_PIN = 21  # [안전 해제 버튼]
 
-# [기어 변속 버튼]
+# [기어/모드 버튼]
 BTN_DRIVE_PIN = 16  
 BTN_PARK_PIN = 20
-# [NEW] 안전 모드 토글 버튼
-BTN_SAFETY_PIN = 26
+BTN_SAFETY_PIN = 26 # [안전 모드 토글]
 
 SERIAL_PORT = '/dev/ttyUSB0'; BAUD_RATE = 115200
 
@@ -112,7 +111,7 @@ def get_usb_card_number():
 USB_CARD_NUM = get_usb_card_number()
 print(f"Detected USB Card Number: {USB_CARD_NUM}")
 
-# ---- 자동차 경고음(Chime) 파일 생성 ----
+# ---- 자동차 경고음(Chime) 파일 생성 (최대 볼륨) ----
 def generate_chime_file(filename="/tmp/chime.wav"):
     try:
         sample_rate = 44100
@@ -122,8 +121,8 @@ def generate_chime_file(filename="/tmp/chime.wav"):
         freq = 880 
         decay = np.exp(-3 * t)
         
-        # 볼륨 증폭
-        wave_data = 0.95 * np.sin(2 * np.pi * freq * t) * decay
+        # 0.98로 볼륨 최대화
+        wave_data = 0.98 * np.sin(2 * np.pi * freq * t) * decay
         
         wave_data = (wave_data * 32767).astype(np.int16)
         with wave.open(filename, 'w') as wf:
@@ -134,7 +133,7 @@ def generate_chime_file(filename="/tmp/chime.wav"):
 
 generate_chime_file()
 
-# ---- 시스템 볼륨 설정 ----
+# ---- 시스템 볼륨 100% 설정 ----
 def set_system_volume():
     if USB_CARD_NUM is not None:
         try:
@@ -156,9 +155,10 @@ def audio_processing_thread():
                 device_flag = ""
                 if USB_CARD_NUM is not None:
                     device_flag = f"-D plughw:{USB_CARD_NUM},0"
+                # 소리 재생 (blocking call 아님)
                 cmd = f"aplay -q {device_flag} /tmp/chime.wav"
                 os.system(cmd)
-                time.sleep(0.5) 
+                time.sleep(0.3) # 반복 간격 조절
             except: time.sleep(1)
         else:
             time.sleep(0.1)
@@ -212,20 +212,24 @@ def process_safety_logic(
     
     # [2] 안전 제한 (Lock Active)
     if lock_active:
-        target_speed = 0 
+        target_speed = 0 # 제한 시 속도 0
         visual_gear = "N" 
         trigger_sound = True 
         
+        # [우선순위 로직]
+        # 1순위: 3초간 "페달 오조작 감지" 메시지 강제 유지
         if current_time < pedal_error_expiry:
             frame_reason = "⚠️ 페달 오조작 감지!"
         else:
+            # 2순위: 3초 후 해제 가이드
             if current_pedal > 0:
                 frame_reason = "⚠️ 엑셀에서 발을 먼저 떼세요!"
             else:
                 if is_btn_pressed:
+                    # [해제 성공]
                     lock_active = False; pedal_error_expiry = 0
                     frame_reason = None; 
-                    target_speed = IDLE_DUTY 
+                    target_speed = IDLE_DUTY # 해제되면 바로 크리핑
                     trigger_sound = False 
                     unlock_success = True 
                 else:
@@ -272,7 +276,7 @@ def process_safety_logic(
             angular_velocity = delta_angle / dt
             current_angular_velocity = angular_velocity
             
-            trigger_event = False; event_msg = ""
+            trigger_event = False
             if angular_velocity >= CRITICAL_ANGULAR_VELOCITY:
                 trigger_event = True
             
@@ -285,18 +289,16 @@ def process_safety_logic(
             prev_over_90 = is_over_90
 
             if trigger_event:
+                # [잠금 시작]
                 lock_active = True
-                pedal_error_expiry = current_time + 3.0
-                target_speed = 0 
+                pedal_error_expiry = current_time + 3.0 # 3초간 메시지 유지
+                target_speed = 0 # 잠금 시 속도 0
                 visual_gear = "N" 
                 trigger_sound = True
                 frame_reason = "⚠️ 페달 오조작 감지!"
             else:
-                if current_pedal > 0:
-                    last_pedal_active_time = current_time
-                    target_speed = max(current_pedal, IDLE_DUTY)
-                else:
-                    target_speed = IDLE_DUTY 
+                # [D모드 정상 주행] -> 최소 속도(크리핑) 적용
+                target_speed = max(current_pedal, IDLE_DUTY)
 
     return {
         "target_speed": target_speed, "logical_reason": frame_reason,
@@ -346,7 +348,6 @@ def hardware_loop():
         GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
         GPIO.setup(BTN_DRIVE_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
         GPIO.setup(BTN_PARK_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        # [NEW] Safety Toggle Button
         GPIO.setup(BTN_SAFETY_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
     pwm_a = GPIO.PWM(PWM_A_PIN, 1000); pwm_a.start(0)
@@ -366,8 +367,6 @@ def hardware_loop():
 
     ser = None
     smoothed_duty = 0.0
-    
-    # 버튼 상태 추적 (토글용)
     last_safety_btn_val = 1 
 
     try:
@@ -377,24 +376,20 @@ def hardware_loop():
                 except: pass
 
             if PLATFORM == "LINUX":
-                # 기어 변속 버튼
                 if GPIO.input(BTN_DRIVE_PIN) == 0:
                     if drive_mode != 'D': drive_mode = 'D'
                 if GPIO.input(BTN_PARK_PIN) == 0:
                     if drive_mode != 'P': drive_mode = 'P'
                 
-                # [NEW] Safety ON/OFF 토글 로직
+                # Safety Toggle
                 curr_safety_btn = GPIO.input(BTN_SAFETY_PIN)
-                if curr_safety_btn == 0 and last_safety_btn_val == 1: # 눌리는 순간
-                    safety_mode_enabled = not safety_mode_enabled # 반전
-                    print(f"Safety Mode Changed: {safety_mode_enabled}")
-                    # 모드 변경 시 잠금 상태 등 초기화
+                if curr_safety_btn == 0 and last_safety_btn_val == 1: 
+                    safety_mode_enabled = not safety_mode_enabled
                     if not safety_mode_enabled:
                         state["lock_active"] = False
                         is_warning_sound_active = False
                 last_safety_btn_val = curr_safety_btn
             
-            # 페달 읽기
             if ser and ser.in_waiting > 0:
                 try:
                     lines = ser.read_all().decode('utf-8').split('\n')
@@ -414,10 +409,8 @@ def hardware_loop():
             if PLATFORM == "LINUX": is_btn_pressed = (GPIO.input(BUTTON_PIN) == 0)
 
             # ----------------------------------------------------
-            # [분기] 안전 모드 ON / OFF 에 따른 로직 처리
-            # ----------------------------------------------------
             if safety_mode_enabled:
-                # [ON] 기존 안전 로직 수행
+                # [ON] 안전 모드
                 result = process_safety_logic(
                     current_time, current_pedal_raw, last_pedal_value, last_time,
                     final_dist, is_btn_pressed,
@@ -426,10 +419,8 @@ def hardware_loop():
                     drive_mode 
                 )
                 
-                # 잠금 시 N 전환
                 if result["lock_active"] and drive_mode == 'D':
                     drive_mode = 'N'
-                # 해제 시 D 전환
                 if result["unlock_success"]:
                     drive_mode = 'D'
                     result["visual_gear"] = 'D'
@@ -438,9 +429,7 @@ def hardware_loop():
                 visual_gear = result["visual_gear"]
                 is_warning_sound_active = result["trigger_sound"]
                 
-                # 상태 업데이트
-                new_reason = result["logical_reason"]
-                current_safety_reason = new_reason
+                current_safety_reason = result["logical_reason"]
                 
                 state.update({
                     "lock_active": result["lock_active"], 
@@ -450,30 +439,28 @@ def hardware_loop():
                     "last_pedal_active_time": result["last_pedal_active_time"]
                 })
                 
-                # 각속도 등은 result에서 가져옴
                 v_val = result["angular_velocity"]
                 r_val = 1 if (result["lock_active"] or result["prev_front_danger"]) else 0
 
             else:
                 # [OFF] 무제한 모드
-                # P모드면 0, D/N이면 페달값 그대로 (단, N은 공회전이라 실제 모터는 0이어야 함은 hardware_loop 아래에서 처리 안함)
-                # 여기서는 'drive_mode'에 따라 간단히 처리
-                
-                target_raw = current_pedal_raw # 기본적으로 페달 그대로
                 visual_gear = drive_mode
-                
                 if drive_mode == 'P':
                     target_raw = 0
                 elif drive_mode == 'N':
-                    target_raw = 0 # N단은 동력 차단 (하지만 RPM은 오름)
+                    target_raw = 0
+                else: # D Mode
+                    # [수정] OFF 모드에서도 D면 크리핑 적용 (옵션)
+                    # "엑셀 밟는데로" = 0이면 0? 하지만 기어 D라면 움직이는게 자연스러움.
+                    # 요청사항: "제한되지 않고 엑셀 밟는데로" -> Raw control
+                    # 만약 사용자가 크리핑을 원하면 아래 줄 주석 해제:
+                    target_raw = max(current_pedal_raw, IDLE_DUTY) 
+                    # target_raw = current_pedal_raw 
                 
-                # 안전 감지 비활성화
                 is_warning_sound_active = False
                 current_safety_reason = None
-                v_val = 0 # 각속도 계산 생략하거나 단순 계산
+                v_val = 0
                 r_val = 0
-                
-                # 단순 각속도 계산용 (그래프용)
                 dt = current_time - last_time
                 if dt > 0:
                     delta_percent = current_pedal_raw - last_pedal_value
@@ -481,7 +468,6 @@ def hardware_loop():
 
             # ----------------------------------------------------
             
-            # 모터 스무딩 (ON/OFF 공통 - 기계적 보호)
             is_shifting = (current_time < shift_pause_timer)
             if not is_shifting:
                 if target_raw > smoothed_duty:
@@ -491,8 +477,6 @@ def hardware_loop():
                     smoothed_duty -= DECEL_STEP
                     if smoothed_duty < target_raw: smoothed_duty = target_raw
             
-            # 변속기 시뮬레이션 (RPM 계산)
-            # N모드일때: 공회전(페달값 반영), D/P일때: 실제 출력(smoothed_duty) 반영
             sim_duty_input = smoothed_duty
             if visual_gear == 'N':
                 sim_duty_input = current_pedal_raw 
@@ -507,7 +491,6 @@ def hardware_loop():
             pwm_a.ChangeDutyCycle(smoothed_duty)
             pwm_b.ChangeDutyCycle(smoothed_duty)
 
-            # 데이터 전송 (safety_mode 추가됨)
             data_queue.put({
                 "t": current_time * 1000, "p": current_pedal_raw, "d": current_duty,
                 "v": v_val, "dist": round(final_dist, 1),
@@ -516,7 +499,7 @@ def hardware_loop():
                 "rpm": rpm, 
                 "gear": gear_num,
                 "v_gear_char": visual_gear,
-                "safety_mode": safety_mode_enabled # [NEW] 프론트엔드로 상태 전송
+                "safety_mode": safety_mode_enabled
             })
 
             last_pedal_value = current_pedal_raw; last_time = current_time
