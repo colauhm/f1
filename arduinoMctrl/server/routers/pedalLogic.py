@@ -117,7 +117,7 @@ def generate_chime_file(filename="/tmp/chime.wav"):
         t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
         freq = 880 
         decay = np.exp(-3 * t)
-        wave_data = 0.5 * np.sin(2 * np.pi * freq * t) * decay
+        wave_data = 0.95 * np.sin(2 * np.pi * freq * t) * decay
         wave_data = (wave_data * 32767).astype(np.int16)
         with wave.open(filename, 'w') as wf:
             wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(sample_rate)
