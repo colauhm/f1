@@ -10,56 +10,56 @@ h1 { font-weight: 200; margin-bottom: 30px; color: #00d2ff; text-shadow: 0 0 10p
 .main-display { display: flex; justify-content: center; align-items: flex-start; gap: 40px; flex-wrap: wrap; }
 .left-panel { display: flex; flex-direction: column; gap: 20px; margin-top: 20px; align-items: center; }
 
-/* [핵심 수정] 안전 모드 박스 (화면 우측 상단 고정) */
+/* [확실한 우측 상단 고정] */
 .safety-box {
-    position: fixed; /* 부모 요소 무시하고 화면 기준 고정 */
-    top: 15px;       /* 상단에서 15px */
-    right: 15px;     /* 우측에서 15px */
+    position: fixed; /* 브라우저 창 기준 절대 좌표 */
+    top: 20px;       
+    right: 20px;     
     border: 2px solid #555; 
     border-radius: 12px;
-    padding: 10px 20px; 
-    background: rgba(20, 20, 20, 0.95); /* 배경 불투명하게 */
+    padding: 15px 25px; 
+    background: rgba(20, 20, 20, 0.95);
     text-align: center; 
-    min-width: 130px;
-    z-index: 9999;   /* 다른 요소보다 항상 위에 */
-    box-shadow: 0 5px 15px rgba(0,0,0,0.7);
+    min-width: 140px;
+    z-index: 9999;
+    box-shadow: 0 5px 20px rgba(0,0,0,0.8);
 }
 
 .safety-title {
-    font-size: 0.8rem; color: #bbb; margin-bottom: 5px; letter-spacing: 1px; font-weight: 600;
+    font-size: 0.9rem; color: #bbb; margin-bottom: 10px; letter-spacing: 1px; font-weight: 600;
 }
 
 .safety-toggle-display {
     display: flex; justify-content: space-between; align-items: center; 
-    font-family: 'Segoe UI', monospace; font-size: 1.8rem; font-weight: bold;
-    gap: 10px;
+    font-family: 'Segoe UI', monospace; font-size: 2.2rem; font-weight: bold;
+    gap: 15px;
 }
 
-/* 기본 상태 (꺼짐) */
+/* 기본 글자색 (비활성) */
 .safety-label {
-    color: #444; 
+    color: #333; 
     transition: all 0.3s;
 }
 
 .safety-divider {
-    color: #555; font-size: 1.5rem;
+    color: #444; font-size: 1.8rem;
 }
 
-/* [ON 활성 상태] - 형광색 */
+/* [ON] 상태일 때 형광색 */
 .safety-label.active.on-active {
     color: #39ff14; 
-    text-shadow: 0 0 15px rgba(57, 255, 20, 0.9);
+    text-shadow: 0 0 20px rgba(57, 255, 20, 0.8), 0 0 10px rgba(57, 255, 20, 1);
     transform: scale(1.1);
 }
 
-/* [OFF 활성 상태] - 붉은색 */
+/* [OFF] 상태일 때 빨간색 */
 .safety-label.active.off-active {
     color: #ff0000; 
-    text-shadow: 0 0 15px rgba(255, 0, 0, 0.9);
+    text-shadow: 0 0 20px rgba(255, 0, 0, 0.8), 0 0 10px rgba(255, 0, 0, 1);
     transform: scale(1.1);
 }
 
-/* ---- 이하 기존 스타일 유지 ---- */
+/* ---- 기존 스타일 ---- */
 .gauge-group { display: flex; align-items: flex-end; gap: 20px; }
 .gauge-wrapper { position: relative; width: 300px; display: flex; flex-direction: column; align-items: center; }
 .gauge-body { width: 300px; height: 150px; position: relative; overflow: hidden; }
