@@ -42,7 +42,7 @@ PWM_B_PIN = 12; IN3_PIN = 5; IN4_PIN = 6
 TRIG_PIN = 27; ECHO_PIN = 17 
 BUTTON_PIN = 21  # [안전 해제 버튼]
 
-# [기어/모드 버튼]
+# [기어 변속 버튼]
 BTN_DRIVE_PIN = 16  
 BTN_PARK_PIN = 20
 BTN_SAFETY_PIN = 26 # [안전 모드 토글]
@@ -111,19 +111,15 @@ def get_usb_card_number():
 USB_CARD_NUM = get_usb_card_number()
 print(f"Detected USB Card Number: {USB_CARD_NUM}")
 
-# ---- 자동차 경고음(Chime) 파일 생성 (최대 볼륨) ----
+# ---- 자동차 경고음(Chime) 파일 생성 ----
 def generate_chime_file(filename="/tmp/chime.wav"):
     try:
         sample_rate = 44100
         duration = 0.8  
         t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
-        
         freq = 880 
         decay = np.exp(-3 * t)
-        
-        # 0.98로 볼륨 최대화
         wave_data = 0.98 * np.sin(2 * np.pi * freq * t) * decay
-        
         wave_data = (wave_data * 32767).astype(np.int16)
         with wave.open(filename, 'w') as wf:
             wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(sample_rate)
@@ -133,7 +129,6 @@ def generate_chime_file(filename="/tmp/chime.wav"):
 
 generate_chime_file()
 
-# ---- 시스템 볼륨 100% 설정 ----
 def set_system_volume():
     if USB_CARD_NUM is not None:
         try:
@@ -155,10 +150,9 @@ def audio_processing_thread():
                 device_flag = ""
                 if USB_CARD_NUM is not None:
                     device_flag = f"-D plughw:{USB_CARD_NUM},0"
-                # 소리 재생 (blocking call 아님)
                 cmd = f"aplay -q {device_flag} /tmp/chime.wav"
                 os.system(cmd)
-                time.sleep(0.3) # 반복 간격 조절
+                time.sleep(0.3) 
             except: time.sleep(1)
         else:
             time.sleep(0.1)
@@ -210,21 +204,22 @@ def process_safety_logic(
             "unlock_success": False
         }
     
-    # [2] 안전 제한 (Lock Active)
+    # [2] 안전 제한 (Lock Active) - 최우선
     if lock_active:
         target_speed = 0 # 제한 시 속도 0
         visual_gear = "N" 
         trigger_sound = True 
         
         # [우선순위 로직]
-        # 1순위: 3초간 "페달 오조작 감지" 메시지 강제 유지
+        # 1. 3초간 "페달 오조작 감지" 메시지 강제 유지
         if current_time < pedal_error_expiry:
             frame_reason = "⚠️ 페달 오조작 감지!"
         else:
-            # 2순위: 3초 후 해제 가이드
+            # 2. 3초 후 -> 엑셀 떼기 안내
             if current_pedal > 0:
                 frame_reason = "⚠️ 엑셀에서 발을 먼저 떼세요!"
             else:
+                # 3. 엑셀 뗌 -> 버튼 누르기 안내
                 if is_btn_pressed:
                     # [해제 성공]
                     lock_active = False; pedal_error_expiry = 0
@@ -289,15 +284,13 @@ def process_safety_logic(
             prev_over_90 = is_over_90
 
             if trigger_event:
-                # [잠금 시작]
                 lock_active = True
                 pedal_error_expiry = current_time + 3.0 # 3초간 메시지 유지
-                target_speed = 0 # 잠금 시 속도 0
+                target_speed = 0 
                 visual_gear = "N" 
                 trigger_sound = True
                 frame_reason = "⚠️ 페달 오조작 감지!"
             else:
-                # [D모드 정상 주행] -> 최소 속도(크리핑) 적용
                 target_speed = max(current_pedal, IDLE_DUTY)
 
     return {
@@ -444,19 +437,14 @@ def hardware_loop():
 
             else:
                 # [OFF] 무제한 모드
-                visual_gear = drive_mode
+                # [핵심 수정] OFF일 때는 기어에 상관없이 페달 밟는 대로 나감
+                target_raw = current_pedal_raw 
+                
+                # 단, P모드일 때만 안전상 정지
                 if drive_mode == 'P':
                     target_raw = 0
-                elif drive_mode == 'N':
-                    target_raw = 0
-                else: # D Mode
-                    # [수정] OFF 모드에서도 D면 크리핑 적용 (옵션)
-                    # "엑셀 밟는데로" = 0이면 0? 하지만 기어 D라면 움직이는게 자연스러움.
-                    # 요청사항: "제한되지 않고 엑셀 밟는데로" -> Raw control
-                    # 만약 사용자가 크리핑을 원하면 아래 줄 주석 해제:
-                    target_raw = max(current_pedal_raw, IDLE_DUTY) 
-                    # target_raw = current_pedal_raw 
                 
+                visual_gear = drive_mode
                 is_warning_sound_active = False
                 current_safety_reason = None
                 v_val = 0
