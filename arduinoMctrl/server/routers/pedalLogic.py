@@ -57,8 +57,8 @@ RAPID_PRESS_WINDOW = 2.0
 SAFETY_SPEED = 20     
 COLLISION_DIST_LIMIT = 100.0 
 
-# [D모드 최소 속도] 30km/h ≈ Duty 19%
-IDLE_DUTY = 19.0      
+# [D모드 최소 속도] 20%로 설정
+IDLE_DUTY = 20.0      
 IDLE_TIMEOUT = 5.0
 
 # [가감속 반응성]
@@ -111,15 +111,18 @@ def get_usb_card_number():
 USB_CARD_NUM = get_usb_card_number()
 print(f"Detected USB Card Number: {USB_CARD_NUM}")
 
-# ---- 자동차 경고음(Chime) 파일 생성 ----
+# ---- 자동차 경고음(Chime) 파일 생성 (최대 볼륨) ----
 def generate_chime_file(filename="/tmp/chime.wav"):
     try:
         sample_rate = 44100
         duration = 0.8  
         t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
+        
         freq = 880 
         decay = np.exp(-3 * t)
+        
         wave_data = 0.98 * np.sin(2 * np.pi * freq * t) * decay
+        
         wave_data = (wave_data * 32767).astype(np.int16)
         with wave.open(filename, 'w') as wf:
             wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(sample_rate)
@@ -129,6 +132,7 @@ def generate_chime_file(filename="/tmp/chime.wav"):
 
 generate_chime_file()
 
+# ---- 시스템 볼륨 100% 설정 ----
 def set_system_volume():
     if USB_CARD_NUM is not None:
         try:
@@ -204,24 +208,20 @@ def process_safety_logic(
             "unlock_success": False
         }
     
-    # [2] 안전 제한 (Lock Active) - 최우선
+    # [2] 안전 제한 (Lock Active)
     if lock_active:
         target_speed = 0 # 제한 시 속도 0
         visual_gear = "N" 
         trigger_sound = True 
         
         # [우선순위 로직]
-        # 1. 3초간 "페달 오조작 감지" 메시지 강제 유지
         if current_time < pedal_error_expiry:
             frame_reason = "⚠️ 페달 오조작 감지!"
         else:
-            # 2. 3초 후 -> 엑셀 떼기 안내
             if current_pedal > 0:
                 frame_reason = "⚠️ 엑셀에서 발을 먼저 떼세요!"
             else:
-                # 3. 엑셀 뗌 -> 버튼 누르기 안내
                 if is_btn_pressed:
-                    # [해제 성공]
                     lock_active = False; pedal_error_expiry = 0
                     frame_reason = None; 
                     target_speed = IDLE_DUTY # 해제되면 바로 크리핑
@@ -291,6 +291,7 @@ def process_safety_logic(
                 trigger_sound = True
                 frame_reason = "⚠️ 페달 오조작 감지!"
             else:
+                # [D모드 정상 주행] 최소 속도 적용
                 target_speed = max(current_pedal, IDLE_DUTY)
 
     return {
@@ -437,12 +438,16 @@ def hardware_loop():
 
             else:
                 # [OFF] 무제한 모드
-                # [핵심 수정] OFF일 때는 기어에 상관없이 페달 밟는 대로 나감
+                # [수정] D모드면 크리핑 적용 (최소 20%)
                 target_raw = current_pedal_raw 
                 
-                # 단, P모드일 때만 안전상 정지
                 if drive_mode == 'P':
                     target_raw = 0
+                elif drive_mode == 'N':
+                    target_raw = 0
+                else: 
+                    # D 모드 크리핑
+                    target_raw = max(current_pedal_raw, IDLE_DUTY) 
                 
                 visual_gear = drive_mode
                 is_warning_sound_active = False
