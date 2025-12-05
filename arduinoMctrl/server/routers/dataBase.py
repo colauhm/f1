@@ -6,7 +6,7 @@ class SystemDB:
         # [설정] MySQL 접속 정보
         self.host = '127.0.0.1'
         self.user = 'root'
-        self.password = '1234'
+        self.password = 'qwe123'
         self.db_name = 'motor_log_db'
         self.charset = 'utf8mb4'
         
