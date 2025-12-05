@@ -6,6 +6,7 @@ import subprocess
 import numpy as np
 import wave
 import os
+import queue  # 큐 다시 사용
 from collections import deque
 from fastapi import APIRouter, FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
@@ -45,13 +46,10 @@ router = APIRouter(prefix="/ws")
 PWM_A_PIN = 13; IN1_PIN = 24; IN2_PIN = 23
 PWM_B_PIN = 12; IN3_PIN = 5; IN4_PIN = 6
 TRIG_PIN = 27; ECHO_PIN = 17 
-BUTTON_PIN = 21  # [해제 버튼]
-BTN_DRIVE_PIN = 16; BTN_PARK_PIN = 20
-BTN_SAFETY_PIN = 26 # [안전 모드 토글]
-
+BUTTON_PIN = 21 
+BTN_DRIVE_PIN = 16; BTN_PARK_PIN = 20; BTN_SAFETY_PIN = 26 
 SERIAL_PORT = '/dev/ttyUSB0'; BAUD_RATE = 115200
 
-# 임계값
 PEDAL_TOTAL_ANGLE = 45.0
 CRITICAL_ANGULAR_VELOCITY = 420
 RAPID_PRESS_COUNT = 3
@@ -67,6 +65,9 @@ stop_threads = False
 is_warning_sound_active = False 
 safety_mode_enabled = True 
 drive_mode = 'N' 
+
+# [큐 부활] 하지만 스마트하게 소비할 것임
+db_queue = queue.Queue()
 
 # 변속기 및 히스토리
 virtual_gear = 1; virtual_rpm = 0; shift_pause_timer = 0.0
@@ -109,6 +110,46 @@ def audio_processing_thread():
             time.sleep(0.3) 
         else: time.sleep(0.1)
 
+# [핵심] 스마트 로깅 스레드 (필터링 로직 포함)
+def db_saving_thread():
+    global stop_threads
+    db = SystemDB()
+    last_save_time = 0
+    
+    while not stop_threads:
+        try:
+            # 큐에서 데이터 가져오기 (0.1초 대기)
+            data = db_queue.get(timeout=0.1)
+            
+            current_time = data['t']
+            has_warning = (data['msg'] is not None) # 경고 메시지가 있는가?
+            time_gap = current_time - last_save_time
+            
+            # [저장 조건]
+            # 1. 경고 메시지가 있거나 (이벤트 발생)
+            # 2. 마지막 저장 후 1초가 지났을 때 (주기적 저장)
+            should_save = has_warning or (time_gap >= 1.0)
+            
+            if should_save:
+                db.insert_frame(
+                    t=data['t'], p=data['p'], d=data['d'], v=data['v'],
+                    dist=data['dist'], rpm=data['rpm'], gear=data['gear'],
+                    v_gear=data['v_gear'], safety=data['safety'],
+                    msg=data['msg'], r=data['r']
+                )
+                last_save_time = current_time
+            
+            db_queue.task_done()
+            
+        except queue.Empty:
+            continue
+        except Exception as e:
+            print(f"DB Thread Error: {e}")
+            # 에러 발생 시 잠시 대기 (무한 루프 방지)
+            time.sleep(1)
+    
+    db.close()
+
 def read_distance():
     if PLATFORM == "WINDOWS": return 50 + 60 * np.sin(time.time())
     try:
@@ -126,53 +167,40 @@ def read_distance():
         return dist if 2 < dist < 400 else None
     except: return None
 
-# [핵심 로직] 3초 잠금 및 해제 절차 (No Queue 버전)
+# [안전 로직] 3초 잠금 및 해제 절차 (Queue + Thread 구조에서도 작동)
 def process_safety_logic(t, pedal, last_p, last_t, dist, btn, lock, expiry, stamps, p_90, p_danger, last_act, mode):
     target=0; reason=None; sound=False; v_gear=mode; unlock=False; r_val=0; ang_vel=0
     
-    # 1. P/N단일 때는 감시하지 않음
     if mode == 'P' or mode == 'N':
         return {"tgt":0, "msg":None, "snd":False, "vel":0, "lock":False, "exp":0, "p90":False, "pd":False, "lat":t, "vg":mode, "ul":False}
 
-    # 2. 이미 잠금(Lock) 상태인 경우 (유지 로직)
     if lock:
-        target = 0      # 속도 0 강제
-        v_gear = 'N'    # 기어 중립 표시
-        sound = True    # 경고음 지속
-        r_val = 1       # 그래프 경고 표시
+        target = 0; v_gear = 'N'; sound = True; r_val = 1
         
-        # [Phase 1] 3초 강제 유지 구간
+        # [Phase 1] 3초 강제 유지
         if t < expiry:
             lock = True 
             reason = "⛔ 위험 감지! (3초간 잠금)"
             
-        # [Phase 2] 3초 경과 후 해제 조건 검사
+        # [Phase 2] 3초 후 해제 조건
         else:
-            # 엑셀 발 떼기 확인
             if pedal > 0:
                 reason = "🦶 엑셀에서 발을 완전히 떼세요!"
-                lock = True # 잠금 유지
+                lock = True
             else:
-                # 버튼 확인
                 if btn:
-                    lock = False   # 해제 성공
-                    reason = None
-                    target = IDLE_DUTY # 크리핑 복귀
-                    sound = False
-                    unlock = True
+                    lock = False; reason = None; target = IDLE_DUTY; sound = False; unlock = True
                 else:
                     reason = "🔵 해제버튼(21번)을 누르세요"
-                    lock = True # 잠금 유지
+                    lock = True
 
         return {"tgt":target, "msg":reason, "snd":sound, "vel":0, "lock":lock, "exp":expiry, "p90":p_90, "pd":p_danger, "lat":last_act, "vg":v_gear, "ul":unlock}
 
-    # 3. 잠금 아님 -> 위험 감지
     front_danger = (0 < dist <= COLLISION_DIST_LIMIT and pedal > 0)
     
     if front_danger:
         reason="⚠️ 전방 주의!"; target=0; sound=True; r_val=1
     else:
-        # 급발진 감지
         dt = t - last_t
         if dt > 0:
             ang_vel = ((pedal - last_p)/100.0 * PEDAL_TOTAL_ANGLE) / dt
@@ -185,14 +213,8 @@ def process_safety_logic(t, pedal, last_p, last_t, dist, btn, lock, expiry, stam
             p_90 = is_90
 
             if trigger:
-                # [위험 감지 -> 잠금 시작]
-                lock = True
-                expiry = t + 3.0  # 현재시간 + 3초
-                target = 0
-                v_gear = 'N'
-                sound = True
-                reason = "⛔ 위험 감지! (잠금 시작)"
-                r_val = 1
+                lock = True; expiry = t + 3.0
+                target = 0; v_gear = 'N'; sound = True; reason = "⛔ 위험 감지! (잠금 시작)"; r_val = 1
                 print(f"!!! LOCK TRIGGERED at {t} !!!")
             else:
                 target = max(pedal, IDLE_DUTY)
@@ -215,12 +237,11 @@ def simulate_transmission(duty, t):
     elif virtual_gear == 3: rpm = 900 + ((duty - SHIFT_POINT_2)/(100-SHIFT_POINT_2))*(MAX_RPM_REAL-900)
     return virtual_gear, int(rpm)
 
-# ---- 하드웨어 루프 (직접 DB 저장 방식) ----
+# ---- 하드웨어 루프 (큐에 데이터 넣기) ----
 def hardware_loop():
     global stop_threads, is_warning_sound_active, drive_mode, safety_mode_enabled
     
-    # [DB 연결]
-    db = SystemDB() 
+    # [주의] 여기서 DB 연결 안 함
 
     GPIO.setmode(GPIO.BCM); GPIO.setwarnings(False)
     GPIO.setup([PWM_A_PIN, PWM_B_PIN, IN1_PIN, IN2_PIN, IN3_PIN, IN4_PIN], GPIO.OUT)
@@ -238,38 +259,33 @@ def hardware_loop():
     state = {"lock":False, "exp":0, "p90":False, "pd":False, "lat":time.time()}
     current_pedal_val = 0 
     
-    # 버튼 노이즈 방지용
+    # 버튼 노이즈 방지
     last_safety_btn_val = 1
     last_safety_toggle_time = 0 
 
     try:
         while not stop_threads:
-            # 1. 시리얼 연결
             if ser is None and PLATFORM == "LINUX":
                 try: ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1); ser.flush()
                 except: pass
             
             t_now = time.time()
             
-            # 2. 버튼 입력 (안전모드 토글 노이즈 방지)
             if PLATFORM == "LINUX":
                 if GPIO.input(BTN_DRIVE_PIN)==0: drive_mode='D'
                 if GPIO.input(BTN_PARK_PIN)==0: drive_mode='P'
                 
                 curr_safe_val = GPIO.input(BTN_SAFETY_PIN)
                 if curr_safe_val == 0 and last_safety_btn_val == 1:
-                    # 0.5초 디바운싱: 너무 빨리 다시 눌리는 것 무시
                     if t_now - last_safety_toggle_time > 0.5:
                         safety_mode_enabled = not safety_mode_enabled
                         last_safety_toggle_time = t_now
-                        print(f"Safety Mode Toggled: {safety_mode_enabled}")
-                        # 안전모드 꺼지면 락 해제
+                        print(f"Safety Mode: {safety_mode_enabled}")
                         if not safety_mode_enabled: 
                             state["lock"] = False
                             is_warning_sound_active = False
                 last_safety_btn_val = curr_safe_val
 
-            # 3. 페달 읽기
             if ser and ser.in_waiting:
                 try: 
                     lines = ser.read_all().decode().split('\n')
@@ -278,28 +294,18 @@ def hardware_loop():
                 except: pass
             curr_pedal = current_pedal_val 
 
-            # 4. 거리 센서
             dist = read_distance() or 0
             if dist > 0: dist_history.append(dist)
             avg_dist = sum(dist_history)/len(dist_history) if dist_history else 0
             
-            # 5. 해제 버튼(21번) 확인
             btn_push = False
             if PLATFORM == "LINUX": btn_push = (GPIO.input(BUTTON_PIN)==0)
 
-            # 6. 로직 수행
             if safety_mode_enabled:
                 res = process_safety_logic(t_now, curr_pedal, last_p, last_t, avg_dist, btn_push, state["lock"], state["exp"], stamps, state["p90"], state["pd"], state["lat"], drive_mode)
                 
                 target_d = res["tgt"]; msg = res["msg"]; is_warning_sound_active = res["snd"]
-                
-                # [중요] 상태 변수 업데이트
-                state["lock"] = res["lock"]
-                state["exp"] = res["exp"]
-                state["p90"] = res["p90"]
-                state["pd"] = res["pd"]
-                state["lat"] = res["lat"]
-                
+                state["lock"]=res["lock"]; state["exp"]=res["exp"]; state["p90"]=res["p90"]; state["pd"]=res["pd"]; state["lat"]=res["lat"]
                 if res["ul"]: drive_mode='D'
                 if res["lock"] and drive_mode=='D': drive_mode='N'
                 v_gear_char = res["vg"]; v_val = res["vel"]
@@ -310,7 +316,6 @@ def hardware_loop():
                 v_val = 0; r_val = 0
                 if t_now - last_t > 0: v_val = ((curr_pedal - last_p)/100.0 * 45.0)/(t_now - last_t)
 
-            # 7. 모터 & 변속
             is_shifting = (t_now < shift_pause_timer)
             if not is_shifting:
                 if target_d > smoothed_duty: smoothed_duty = min(target_d, smoothed_duty + ACCEL_STEP)
@@ -323,34 +328,33 @@ def hardware_loop():
             pwm_a.ChangeDutyCycle(smoothed_duty)
             pwm_b.ChangeDutyCycle(smoothed_duty)
             
-            # 8. [DB 저장 - 직접 호출]
-            # 큐를 쓰지 않으므로 여기서 바로 저장합니다.
-            # MySQL 지연이 발생해도 로직(lock 변수)은 유지되도록 위에서 처리했습니다.
-            try:
-                db.insert_frame(
-                    t=t_now, p=curr_pedal, d=smoothed_duty, v=v_val, 
-                    dist=round(avg_dist, 1), rpm=rpm, gear=g_num, 
-                    v_gear=v_gear_char, safety=safety_mode_enabled, 
-                    msg=msg, r=r_val
-                )
-            except Exception as e:
-                print(f"DB Write Error: {e}") 
-                # DB 에러가 나도 루프가 멈추지 않게 함
+            # [스마트 큐잉]
+            # 여기서는 무조건 큐에 넣고, 소비하는 쪽(스레드)에서 저장할지 말지 결정함
+            log_data = {
+                't': t_now, 'p': curr_pedal, 'd': smoothed_duty, 'v': v_val,
+                'dist': round(avg_dist, 1), 'rpm': rpm, 'gear': g_num,
+                'v_gear': v_gear_char, 'safety': safety_mode_enabled,
+                'msg': msg, 'r': r_val
+            }
+            db_queue.put(log_data)
 
             last_p = curr_pedal; last_t = t_now
             time.sleep(0.01)
 
-    except Exception as e: print(f"Main Loop Error: {e}")
+    except Exception as e: print(f"HW Loop Err: {e}")
     finally:
         pwm_a.stop(); pwm_b.stop(); GPIO.cleanup()
         if ser: ser.close()
-        db.close()
 
 def start_hardware():
+    # 1. 오디오 스레드
     threading.Thread(target=audio_processing_thread, daemon=True).start()
+    # 2. 스마트 DB 저장 스레드
+    threading.Thread(target=db_saving_thread, daemon=True).start()
+    # 3. 메인 하드웨어 제어 스레드
     threading.Thread(target=hardware_loop, daemon=True).start()
 
-# ---- 웹소켓 ----
+# ---- 웹소켓 (DB 폴링) ----
 @router.websocket("")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -362,6 +366,7 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             if stop_threads: break
             
+            # DB가 가벼워졌으므로 폴링 부담이 적음
             new_logs, max_id = db_ws.fetch_new_logs(last_fetched_id)
             
             if new_logs:
