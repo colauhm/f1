@@ -314,9 +314,10 @@ def hardware_loop():
             pwm_a.ChangeDutyCycle(smoothed_duty)
             pwm_b.ChangeDutyCycle(smoothed_duty)
             
-            # [롤백] 큐에 데이터 넣기 (가장 빠름)
+            # [수정] 큐에 데이터 넣기 (시간 단위 수정: 초 -> 밀리초)
             log_data = {
-                't': t_now, 'p': curr_pedal, 'd': smoothed_duty, 'v': v_val,
+                't': t_now * 1000, # [중요] 자바스크립트는 밀리초 단위(ms)를 씁니다. 여기서 1000을 곱해줘야 그래프에 나옵니다.
+                'p': curr_pedal, 'd': smoothed_duty, 'v': v_val,
                 'dist': round(avg_dist, 1), 'rpm': rpm, 'gear': g_num,
                 'v_gear': v_gear_char, 'safety': safety_mode_enabled,
                 'msg': msg, 'r': r_val
@@ -359,7 +360,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     "current": {
                         "duty": latest["d"],
                         "pedal": latest["p"],
-                        "reason": latest["msg"], # 여기 msg로 통일
+                        "reason": latest["msg"],
                         "remaining_time": 0,
                         "rpm": latest["rpm"],
                         "gear": latest["gear"],
