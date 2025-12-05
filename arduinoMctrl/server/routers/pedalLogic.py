@@ -11,7 +11,7 @@ from collections import deque
 from fastapi import APIRouter, FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 
-# [DB 관련 코드 모두 제거됨]
+# [DB 관련 코드 제거됨 - 순정 큐 방식]
 
 # ---- 1. 하드웨어 설정 ----
 try:
@@ -126,7 +126,7 @@ def read_distance():
         return dist if 2 < dist < 400 else None
     except: return None
 
-# [안전 로직] 3초 잠금 및 해제 절차 (강화된 버전 유지)
+# [핵심 로직] 3초 유지 -> 엑셀 뗌 확인 -> 버튼 확인 순서 강제
 def process_safety_logic(t, pedal, last_p, last_t, dist, btn, lock, expiry, stamps, p_90, p_danger, last_act, mode):
     target=0; reason=None; sound=False; v_gear=mode; unlock=False; r_val=0; ang_vel=0
     
@@ -134,45 +134,49 @@ def process_safety_logic(t, pedal, last_p, last_t, dist, btn, lock, expiry, stam
     if mode == 'P' or mode == 'N':
         return {"tgt":0, "msg":None, "snd":False, "vel":0, "lock":False, "exp":0, "p90":False, "pd":False, "lat":t, "vg":mode, "ul":False}
 
-    # 2. 이미 잠금(Lock) 상태인 경우
+    # 2. 이미 잠금(Lock) 상태인 경우 (여기가 가장 중요)
     if lock:
         target = 0      # 속도 0 강제
         v_gear = 'N'    # 기어 중립 표시
         sound = True    # 경고음 지속
         r_val = 1       # 그래프 빨간색
         
-        # [Phase 1] 3초 강제 유지 구간
+        # [단계 1] 3초 강제 대기 (무조건 잠금 유지)
         if t < expiry:
-            lock = True 
-            reason = "⛔ 위험 감지! (3초간 잠금)"
+            lock = True
+            remaining = int(expiry - t) + 1
+            reason = f"⛔ 위험 감지! ({remaining}초 대기)"
             
-        # [Phase 2] 3초 경과 후 해제 조건 검사
+        # [단계 2] 3초 지난 후 -> 해제 조건 검사
         else:
-            # 엑셀 발 떼기 확인
+            # 2-1. 엑셀에서 발을 뗐는가?
             if pedal > 0:
                 reason = "🦶 엑셀에서 발을 완전히 떼세요!"
                 lock = True # 잠금 유지
+            
+            # 2-2. 엑셀을 뗐다면 -> 버튼을 눌렀는가?
             else:
-                # 버튼 확인
                 if btn:
-                    lock = False   # 해제 성공
+                    # 모든 조건 만족 -> 해제!
+                    lock = False   
                     reason = None
                     target = IDLE_DUTY # 크리핑 복귀
                     sound = False
                     unlock = True
                 else:
+                    # 버튼 누르기 전까지 대기
                     reason = "🔵 해제버튼(21번)을 누르세요"
                     lock = True # 잠금 유지
 
         return {"tgt":target, "msg":reason, "snd":sound, "vel":0, "lock":lock, "exp":expiry, "p90":p_90, "pd":p_danger, "lat":last_act, "vg":v_gear, "ul":unlock}
 
-    # 3. 잠금 아님 -> 위험 감지
+    # 3. 잠금 아님 -> 위험 감지 로직
     front_danger = (0 < dist <= COLLISION_DIST_LIMIT and pedal > 0)
     
     if front_danger:
         reason="⚠️ 전방 주의!"; target=0; sound=True; r_val=1
     else:
-        # 급발진 감지
+        # 각속도 계산
         dt = t - last_t
         if dt > 0:
             ang_vel = ((pedal - last_p)/100.0 * PEDAL_TOTAL_ANGLE) / dt
@@ -185,8 +189,14 @@ def process_safety_logic(t, pedal, last_p, last_t, dist, btn, lock, expiry, stam
             p_90 = is_90
 
             if trigger:
-                lock = True; expiry = t + 3.0
-                target = 0; v_gear = 'N'; sound = True; reason = "⛔ 위험 감지! (잠금 시작)"; r_val = 1
+                # [위험 감지 -> 잠금 시작]
+                lock = True
+                expiry = t + 3.0  # 현재시간 + 3초
+                target = 0
+                v_gear = 'N'
+                sound = True
+                reason = "⛔ 위험 감지! (3초 대기)"
+                r_val = 1
                 print(f"!!! LOCK TRIGGERED at {t} !!!")
             else:
                 target = max(pedal, IDLE_DUTY)
@@ -227,6 +237,7 @@ def hardware_loop():
     last_p = 0; last_t = time.time()
     stamps = deque()
     
+    # [중요] 상태 저장 변수 초기화
     state = {"lock":False, "exp":0, "p90":False, "pd":False, "lat":time.time()}
     current_pedal_val = 0 
     
@@ -236,7 +247,7 @@ def hardware_loop():
 
     try:
         while not stop_threads:
-            # 1. 시리얼
+            # 1. 시리얼 연결
             if ser is None and PLATFORM == "LINUX":
                 try: ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1); ser.flush()
                 except: pass
@@ -250,7 +261,6 @@ def hardware_loop():
                 
                 curr_safe_val = GPIO.input(BTN_SAFETY_PIN)
                 if curr_safe_val == 0 and last_safety_btn_val == 1:
-                    # 0.5초 디바운싱
                     if t_now - last_safety_toggle_time > 0.5:
                         safety_mode_enabled = not safety_mode_enabled
                         last_safety_toggle_time = t_now
@@ -278,18 +288,18 @@ def hardware_loop():
             btn_push = False
             if PLATFORM == "LINUX": btn_push = (GPIO.input(BUTTON_PIN)==0)
 
-            # 6. 로직
+            # 6. 로직 수행
             if safety_mode_enabled:
                 res = process_safety_logic(t_now, curr_pedal, last_p, last_t, avg_dist, btn_push, state["lock"], state["exp"], stamps, state["p90"], state["pd"], state["lat"], drive_mode)
                 
                 target_d = res["tgt"]; msg = res["msg"]; is_warning_sound_active = res["snd"]
                 
-                # 상태 업데이트
-                state["lock"]=res["lock"]
-                state["exp"]=res["exp"]
-                state["p90"]=res["p90"]
-                state["pd"]=res["pd"]
-                state["lat"]=res["lat"]
+                # [중요] 상태 업데이트 (이게 없으면 경고가 유지 안 됨)
+                state["lock"] = res["lock"]
+                state["exp"] = res["exp"]
+                state["p90"] = res["p90"]
+                state["pd"] = res["pd"]
+                state["lat"] = res["lat"]
                 
                 if res["ul"]: drive_mode='D'
                 if res["lock"] and drive_mode=='D': drive_mode='N'
@@ -314,9 +324,10 @@ def hardware_loop():
             pwm_a.ChangeDutyCycle(smoothed_duty)
             pwm_b.ChangeDutyCycle(smoothed_duty)
             
-            # [수정] 큐에 데이터 넣기 (시간 단위 수정: 초 -> 밀리초)
+            # [수정] 큐에 데이터 넣기 (그래프가 안 그려지던 문제 해결)
             log_data = {
-                't': t_now * 1000, # [중요] 자바스크립트는 밀리초 단위(ms)를 씁니다. 여기서 1000을 곱해줘야 그래프에 나옵니다.
+                # [핵심] 웹 그래프는 ms 단위를 씁니다. *1000을 안 하면 1970년으로 나와서 그래프가 안 보입니다.
+                't': t_now * 1000, 
                 'p': curr_pedal, 'd': smoothed_duty, 'v': v_val,
                 'dist': round(avg_dist, 1), 'rpm': rpm, 'gear': g_num,
                 'v_gear': v_gear_char, 'safety': safety_mode_enabled,
@@ -345,7 +356,6 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             if stop_threads: break
             
-            # 큐에 쌓인 데이터를 한 번에 가져와서 전송 (그래프 부드러움 유지)
             history_batch = []
             while not data_queue.empty():
                 try: history_batch.append(data_queue.get_nowait())
