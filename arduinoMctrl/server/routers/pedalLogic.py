@@ -66,7 +66,7 @@ drive_mode = 'N'
 virtual_gear = 1; virtual_rpm = 0; shift_pause_timer = 0.0
 dist_history = deque(maxlen=10)
 
-# USB 오디오 및 경고음 생성 (생략 가능하나 유지)
+# USB 오디오 및 경고음 생성
 def get_usb_card_number():
     try:
         result = subprocess.check_output("aplay -l", shell=True).decode()
@@ -120,30 +120,58 @@ def read_distance():
         return dist if 2 < dist < 400 else None
     except: return None
 
-# 안전 로직
+# [핵심 수정] 안전 로직
 def process_safety_logic(t, pedal, last_p, last_t, dist, btn, lock, expiry, stamps, p_90, p_danger, last_act, mode):
     target=0; reason=None; sound=False; v_gear=mode; unlock=False; r_val=0; ang_vel=0
     
+    # 1. 주차(P) 또는 중립(N)일 때는 검사 안 함
     if mode == 'P' or mode == 'N':
         return {"tgt":0, "msg":None, "snd":False, "vel":0, "lock":False, "exp":0, "p90":False, "pd":False, "lat":t, "vg":mode, "ul":False}
 
+    # 2. 이미 잠금(Lock) 상태인 경우 (여기가 핵심 수정 부분)
     if lock:
-        target=0; v_gear='N'; sound=True
-        if t < expiry: reason = "⚠️ 페달 오조작 감지!"
-        elif pedal > 0: reason = "⚠️ 엑셀에서 발을 먼저 떼세요!"
-        elif btn: lock=False; reason=None; target=IDLE_DUTY; sound=False; unlock=True
-        else: reason = "🔵 해제버튼(21번)을 누르세요"
+        target = 0      # 속도 0 강제
+        v_gear = 'N'    # 기어 중립 표시
+        sound = True    # 경고음 지속
+        
+        # [Phase 1] 3초간 강제 대기 (버튼 눌러도 반응 안 함)
+        if t < expiry:
+            reason = "⚠️ 페달 오조작 감지! (잠금 중)"
+            # 여기서 lock = True 유지, unlock = False
+        
+        # [Phase 2] 3초 지남 -> 해제 조건 검사
+        else:
+            # 안전을 위해 엑셀에서 발을 떼야만 해제 가능하도록 함
+            if pedal > 0:
+                reason = "⚠️ 엑셀에서 발을 완전히 떼세요!"
+            else:
+                # 엑셀 뗐으면 -> 버튼 누르라고 안내
+                if btn: # 버튼 눌림
+                    lock = False
+                    reason = None
+                    target = IDLE_DUTY # 크리핑(Creeping) 속도로 복귀
+                    sound = False
+                    unlock = True
+                else:
+                    reason = "🔵 해제버튼(21번)을 누르세요"
+
+        # 결과 리턴 (lock 변수가 Phase 2에서만 False로 바뀜)
         return {"tgt":target, "msg":reason, "snd":sound, "vel":0, "lock":lock, "exp":expiry, "p90":p_90, "pd":p_danger, "lat":last_act, "vg":v_gear, "ul":unlock}
 
+    # 3. 잠금 상태 아님 -> 위험 감지 시작
     front_danger = (0 < dist <= COLLISION_DIST_LIMIT and pedal > 0)
+    
     if front_danger:
+        # 전방 충돌 위험 시 즉시 정지 (Lock은 안 걸지만 멈춤)
         reason="⚠️ 전방을 주의하세요!"; target=0; sound=True
     else:
+        # 급발진(각속도) 감지
         dt = t - last_t
         if dt > 0:
             ang_vel = ((pedal - last_p)/100.0 * PEDAL_TOTAL_ANGLE) / dt
             trigger = (ang_vel >= CRITICAL_ANGULAR_VELOCITY)
             
+            # 3연타 감지
             is_90 = (pedal >= 90)
             if is_90 and not p_90: stamps.append(t)
             while stamps and stamps[0] < t - RAPID_PRESS_WINDOW: stamps.popleft()
@@ -151,7 +179,13 @@ def process_safety_logic(t, pedal, last_p, last_t, dist, btn, lock, expiry, stam
             p_90 = is_90
 
             if trigger:
-                lock=True; expiry=t+3.0; target=0; v_gear='N'; sound=True; reason="⚠️ 페달 오조작 감지!"
+                # [위험 감지됨 -> 잠금 시작]
+                lock = True
+                expiry = t + 3.0  # 현재시간 + 3초
+                target = 0
+                v_gear = 'N'
+                sound = True
+                reason = "⚠️ 페달 오조작 감지! (잠금 시작)"
             else:
                 target = max(pedal, IDLE_DUTY)
 
@@ -173,11 +207,11 @@ def simulate_transmission(duty, t):
     elif virtual_gear == 3: rpm = 900 + ((duty - SHIFT_POINT_2)/(100-SHIFT_POINT_2))*(MAX_RPM_REAL-900)
     return virtual_gear, int(rpm)
 
-# ---- 하드웨어 루프 (고속 DB 쓰기 적용) ----
+# ---- 하드웨어 루프 (고속 DB 쓰기 유지) ----
 def hardware_loop():
     global stop_threads, is_warning_sound_active, drive_mode, safety_mode_enabled
     
-    # [1] DB 객체 생성 (여기서 연결 맺음)
+    # DB 연결
     db = SystemDB() 
 
     # GPIO 설정
@@ -195,8 +229,7 @@ def hardware_loop():
     stamps = deque()
     
     state = {"lock":False, "exp":0, "p90":False, "pd":False, "lat":time.time()}
-
-    # [변수 유지용]
+    
     current_pedal_val = 0 
 
     try:
@@ -215,15 +248,13 @@ def hardware_loop():
                     if not safety_mode_enabled: state["lock"]=False; is_warning_sound_active=False
                 last_safety_btn = curr_safe
 
-            # 페달 (값 유지 로직)
+            # 페달
             if ser and ser.in_waiting:
                 try: 
                     lines = ser.read_all().decode().split('\n')
                     valid = [l for l in lines if l.strip().isdigit()]
-                    if valid: 
-                        current_pedal_val = max(0, min(100, int(valid[-1])))
+                    if valid: current_pedal_val = max(0, min(100, int(valid[-1])))
                 except: pass
-            
             curr_pedal = current_pedal_val 
 
             t_now = time.time()
@@ -231,14 +262,23 @@ def hardware_loop():
             if dist > 0: dist_history.append(dist)
             avg_dist = sum(dist_history)/len(dist_history) if dist_history else 0
             
+            # 해제 버튼 읽기
             btn_push = False
             if PLATFORM == "LINUX": btn_push = (GPIO.input(BUTTON_PIN)==0)
 
             # 로직 수행
             if safety_mode_enabled:
                 res = process_safety_logic(t_now, curr_pedal, last_p, last_t, avg_dist, btn_push, state["lock"], state["exp"], stamps, state["p90"], state["pd"], state["lat"], drive_mode)
+                
                 target_d = res["tgt"]; msg = res["msg"]; is_warning_sound_active = res["snd"]
-                state["lock"]=res["lock"]; state["exp"]=res["exp"]; state["p90"]=res["p90"]; state["pd"]=res["pd"]; state["lat"]=res["lat"]
+                
+                # 상태 업데이트 (가장 중요)
+                state["lock"]=res["lock"]
+                state["exp"]=res["exp"]
+                state["p90"]=res["p90"]
+                state["pd"]=res["pd"]
+                state["lat"]=res["lat"]
+                
                 if res["ul"]: drive_mode='D'
                 if res["lock"] and drive_mode=='D': drive_mode='N'
                 v_gear_char = res["vg"]
@@ -263,8 +303,7 @@ def hardware_loop():
             pwm_a.ChangeDutyCycle(smoothed_duty)
             pwm_b.ChangeDutyCycle(smoothed_duty)
             
-            # [DB 고속 저장]
-            # 이미 연결된 conn 객체를 사용하므로 매우 빠름
+            # DB 저장
             db.insert_frame(
                 t=t_now, p=curr_pedal, d=smoothed_duty, v=v_val, 
                 dist=round(avg_dist, 1), rpm=rpm, gear=g_num, 
@@ -273,13 +312,13 @@ def hardware_loop():
             )
 
             last_p = curr_pedal; last_t = t_now
-            time.sleep(0.01) # 10ms 주기
+            time.sleep(0.01)
 
     except Exception as e: print(e)
     finally:
         pwm_a.stop(); pwm_b.stop(); GPIO.cleanup()
         if ser: ser.close()
-        db.close() # 종료 시 닫기
+        db.close()
 
 def start_hardware():
     threading.Thread(target=audio_processing_thread, daemon=True).start()
@@ -290,7 +329,6 @@ def start_hardware():
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     
-    # 웹소켓용 별도 DB 연결
     db_ws = SystemDB()
     last_fetched_id = 0 
     
