@@ -11,9 +11,12 @@ from fastapi import APIRouter, FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 
 # [DB 모듈 임포트]
-from .dataBase import SystemDB 
+try:
+    from .dataBase import SystemDB
+except ImportError:
+    from dataBase import SystemDB
 
-# ---- 1. 하드웨어 설정 (기존과 동일) ----
+# ---- 1. 하드웨어 설정 ----
 try:
     import RPi.GPIO as GPIO
     PLATFORM = "LINUX"
@@ -38,7 +41,7 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="."), name="static")
 router = APIRouter(prefix="/ws")
 
-# ---- 2. 핀 및 상수 설정 (기존과 동일) ----
+# ---- 2. 핀 및 상수 설정 ----
 PWM_A_PIN = 13; IN1_PIN = 24; IN2_PIN = 23
 PWM_B_PIN = 12; IN3_PIN = 5; IN4_PIN = 6
 TRIG_PIN = 27; ECHO_PIN = 17 
@@ -63,10 +66,7 @@ drive_mode = 'N'
 virtual_gear = 1; virtual_rpm = 0; shift_pause_timer = 0.0
 dist_history = deque(maxlen=10)
 
-# [중요] 큐 제거함 (DB로 대체)
-# data_queue = queue.Queue() 
-
-# USB 오디오 및 경고음 생성 (기존과 동일)
+# USB 오디오 및 경고음 생성 (생략 가능하나 유지)
 def get_usb_card_number():
     try:
         result = subprocess.check_output("aplay -l", shell=True).decode()
@@ -120,7 +120,7 @@ def read_distance():
         return dist if 2 < dist < 400 else None
     except: return None
 
-# 안전 로직 (기존과 동일하지만 간략화)
+# 안전 로직
 def process_safety_logic(t, pedal, last_p, last_t, dist, btn, lock, expiry, stamps, p_90, p_danger, last_act, mode):
     target=0; reason=None; sound=False; v_gear=mode; unlock=False; r_val=0; ang_vel=0
     
@@ -173,11 +173,11 @@ def simulate_transmission(duty, t):
     elif virtual_gear == 3: rpm = 900 + ((duty - SHIFT_POINT_2)/(100-SHIFT_POINT_2))*(MAX_RPM_REAL-900)
     return virtual_gear, int(rpm)
 
-# ---- 하드웨어 루프 (DB 저장 추가) ----
+# ---- 하드웨어 루프 (고속 DB 쓰기 적용) ----
 def hardware_loop():
-    global stop_threads, is_warning_sound_active, drive_mode, safety_mode_enabled, current_pedal_raw
+    global stop_threads, is_warning_sound_active, drive_mode, safety_mode_enabled
     
-    # [1] DB 객체 생성
+    # [1] DB 객체 생성 (여기서 연결 맺음)
     db = SystemDB() 
 
     # GPIO 설정
@@ -196,14 +196,16 @@ def hardware_loop():
     
     state = {"lock":False, "exp":0, "p90":False, "pd":False, "lat":time.time()}
 
+    # [변수 유지용]
+    current_pedal_val = 0 
+
     try:
         while not stop_threads:
-            # 시리얼 연결
             if ser is None and PLATFORM == "LINUX":
                 try: ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1); ser.flush()
                 except: pass
             
-            # 버튼 입력 처리
+            # 버튼
             if PLATFORM == "LINUX":
                 if GPIO.input(BTN_DRIVE_PIN)==0: drive_mode='D'
                 if GPIO.input(BTN_PARK_PIN)==0: drive_mode='P'
@@ -213,15 +215,17 @@ def hardware_loop():
                     if not safety_mode_enabled: state["lock"]=False; is_warning_sound_active=False
                 last_safety_btn = curr_safe
 
-            # 페달 값 읽기
-            curr_pedal = 0
+            # 페달 (값 유지 로직)
             if ser and ser.in_waiting:
                 try: 
                     lines = ser.read_all().decode().split('\n')
                     valid = [l for l in lines if l.strip().isdigit()]
-                    if valid: curr_pedal = max(0, min(100, int(valid[-1])))
+                    if valid: 
+                        current_pedal_val = max(0, min(100, int(valid[-1])))
                 except: pass
             
+            curr_pedal = current_pedal_val 
+
             t_now = time.time()
             dist = read_distance() or 0
             if dist > 0: dist_history.append(dist)
@@ -246,7 +250,7 @@ def hardware_loop():
                 v_val = 0; r_val = 0
                 if t_now - last_t > 0: v_val = ((curr_pedal - last_p)/100.0 * 45.0)/(t_now - last_t)
 
-            # 모터 스무딩 & 변속
+            # 모터 & 변속
             is_shifting = (t_now < shift_pause_timer)
             if not is_shifting:
                 if target_d > smoothed_duty: smoothed_duty = min(target_d, smoothed_duty + ACCEL_STEP)
@@ -259,8 +263,8 @@ def hardware_loop():
             pwm_a.ChangeDutyCycle(smoothed_duty)
             pwm_b.ChangeDutyCycle(smoothed_duty)
             
-            # [핵심] DB에 모든 프레임 저장
-            # 큐(data_queue) 대신 DB에 넣습니다.
+            # [DB 고속 저장]
+            # 이미 연결된 conn 객체를 사용하므로 매우 빠름
             db.insert_frame(
                 t=t_now, p=curr_pedal, d=smoothed_duty, v=v_val, 
                 dist=round(avg_dist, 1), rpm=rpm, gear=g_num, 
@@ -275,41 +279,39 @@ def hardware_loop():
     finally:
         pwm_a.stop(); pwm_b.stop(); GPIO.cleanup()
         if ser: ser.close()
+        db.close() # 종료 시 닫기
 
 def start_hardware():
     threading.Thread(target=audio_processing_thread, daemon=True).start()
     threading.Thread(target=hardware_loop, daemon=True).start()
 
-# ---- 웹소켓 (DB 폴링 방식) ----
+# ---- 웹소켓 (DB 폴링) ----
 @router.websocket("")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     
-    # 웹소켓 전용 DB 연결
-    db = SystemDB()
-    last_fetched_id = 0 # 마지막으로 가져온 데이터 ID
+    # 웹소켓용 별도 DB 연결
+    db_ws = SystemDB()
+    last_fetched_id = 0 
     
     try:
         while True:
             if stop_threads: break
             
-            # [핵심] DB에서 최신 데이터 조회 (Polling)
-            new_logs, max_id = db.fetch_new_logs(last_fetched_id)
+            new_logs, max_id = db_ws.fetch_new_logs(last_fetched_id)
             
             if new_logs:
                 last_fetched_id = max_id
-                
-                # 가장 최신 데이터 (현재 상태용)
                 latest = new_logs[-1]
                 
                 payload = {
                     "type": "batch",
-                    "history": new_logs, # 이번 턴에 새로 생긴 모든 로그
+                    "history": new_logs,
                     "current": {
                         "duty": latest["d"],
                         "pedal": latest["p"],
                         "reason": latest["reason"],
-                        "remaining_time": 0, # DB에 저장 안 해서 생략 (필요 시 추가 가능)
+                        "remaining_time": 0,
                         "rpm": latest["rpm"],
                         "gear": latest["gear"],
                         "v_gear": latest["v_gear_char"],
@@ -318,7 +320,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 }
                 await websocket.send_json(payload)
             
-            # 너무 자주 조회하면 DB 락 걸릴 수 있으니 약간의 딜레이
             await asyncio.sleep(0.05) 
             
     except Exception as e:
