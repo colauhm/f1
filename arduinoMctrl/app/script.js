@@ -124,7 +124,7 @@ ws.onmessage = (event) => {
         if (current.duty !== undefined) {
             const duty = parseFloat(current.duty);
             
-            // 게이지 바늘 각도 (-90 ~ 90도)
+            // 1. 게이지 바늘 각도 (-90 ~ 90도)
             let angle = (duty * 1.8) - 90;
             if (angle < -90) angle = -90; if (angle > 90) angle = 90;
             needle.style.transform = `rotate(${angle}deg)`;
@@ -133,11 +133,13 @@ ws.onmessage = (event) => {
             const backendGear = current.gear || 1;
             const vGear = current.v_gear || 'N'; 
 
-            // [수정된 속도 계산 로직]
-            // 조건: Duty 20% -> 15km/h, Duty 100% -> 100km/h
-            // 공식: y = 1.0625x - 6.25
+            // [핵심 수정] 실제 RPM 기반 속도 계산을 제거하고, Duty 기반 가상 속도로 변경
+            // 공식: y = 1.0625x - 6.25 
+            // (20 입력 시 15, 100 입력 시 100이 나옴)
             let displaySpeed = (duty * 1.0625) - 6.25;
-            if (displaySpeed < 0) displaySpeed = 0; // 마이너스 방지
+            
+            // 음수 방지 (Duty가 낮을 때 -값 나오는 것 방지)
+            if (displaySpeed < 0) displaySpeed = 0;
 
             // 기어가 N이나 P면 속도 0 고정
             if(vGear === 'N' || vGear === 'P') displaySpeed = 0;
@@ -187,7 +189,6 @@ ws.onmessage = (event) => {
 
             history.forEach(pt => {
                 const isRestricted = (pt.r === 1);
-                // [수정] 타임스탬프가 이미 ms 단위로 오므로 그대로 사용
                 const point = { x: pt.t, y: pt.p, restricted: isRestricted };
                 const pointM = { x: pt.t, y: pt.d, restricted: isRestricted };
                 const pointV = { x: pt.t, y: pt.v, restricted: isRestricted };
