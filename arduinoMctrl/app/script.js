@@ -24,8 +24,6 @@ const THRESHOLD_COUNT = 3;
 const COLOR_GREEN = "#39ff14";
 const COLOR_RED = "#ff0000";
 
-const TIRE_CIRCUM = 2.0; 
-
 let pedalBuffer = [], motorBuffer = [], velocityBuffer = [], distanceBuffer = [];
 const MAX_STORE_MINUTES = 1.5; 
 const MAX_DATA_POINTS = 2500;
@@ -126,6 +124,7 @@ ws.onmessage = (event) => {
         if (current.duty !== undefined) {
             const duty = parseFloat(current.duty);
             
+            // 게이지 바늘 각도 (-90 ~ 90도)
             let angle = (duty * 1.8) - 90;
             if (angle < -90) angle = -90; if (angle > 90) angle = 90;
             needle.style.transform = `rotate(${angle}deg)`;
@@ -134,26 +133,28 @@ ws.onmessage = (event) => {
             const backendGear = current.gear || 1;
             const vGear = current.v_gear || 'N'; 
 
-            const currentSpeed = backendRpm * TIRE_CIRCUM * 0.06;
+            // [수정된 속도 계산 로직]
+            // 조건: Duty 20% -> 15km/h, Duty 100% -> 100km/h
+            // 공식: y = 1.0625x - 6.25
+            let displaySpeed = (duty * 1.0625) - 6.25;
+            if (displaySpeed < 0) displaySpeed = 0; // 마이너스 방지
 
-            let displaySpeed = currentSpeed;
+            // 기어가 N이나 P면 속도 0 고정
             if(vGear === 'N' || vGear === 'P') displaySpeed = 0;
 
             rpmText.innerText = backendRpm; 
-            speedText.innerText = Math.round(displaySpeed);
+            speedText.innerText = Math.round(displaySpeed); // 반올림해서 표시
             
             if(vGear === 'D') gearText.innerText = "D" + backendGear;
             else gearText.innerText = vGear;
 
             updateGearStrip(vGear);
 
-            // [핵심] 안전 모드 박스 업데이트
+            // 안전 모드 박스 업데이트
             if (current.safety_mode) {
-                // ON 켜짐 (active + on-active)
                 safetyLabelOn.classList.add("active", "on-active");
                 safetyLabelOff.classList.remove("active", "off-active");
             } else {
-                // OFF 켜짐 (active + off-active)
                 safetyLabelOn.classList.remove("active", "on-active");
                 safetyLabelOff.classList.add("active", "off-active");
             }
@@ -186,6 +187,7 @@ ws.onmessage = (event) => {
 
             history.forEach(pt => {
                 const isRestricted = (pt.r === 1);
+                // [수정] 타임스탬프가 이미 ms 단위로 오므로 그대로 사용
                 const point = { x: pt.t, y: pt.p, restricted: isRestricted };
                 const pointM = { x: pt.t, y: pt.d, restricted: isRestricted };
                 const pointV = { x: pt.t, y: pt.v, restricted: isRestricted };
