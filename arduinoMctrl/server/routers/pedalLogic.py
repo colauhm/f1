@@ -163,7 +163,10 @@ def read_distance():
         GPIO.output(TRIG_PIN, False); time.sleep(0.000005)
         GPIO.output(TRIG_PIN, True); time.sleep(0.00001)
         GPIO.output(TRIG_PIN, False)
-        start_time = time.time(); stop_time = time.time(); timeout = start_time + 0.04
+        
+        # [수정] 타임아웃을 0.04 -> 0.02로 줄여 루프 지연 방지
+        start_time = time.time(); stop_time = time.time(); timeout = start_time + 0.02 
+        
         while GPIO.input(ECHO_PIN) == 0:
             start_time = time.time()
             if start_time > timeout: return None
@@ -496,32 +499,29 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             if stop_threads: break
-            
             history_batch = []
             while not data_queue.empty():
                 try: history_batch.append(data_queue.get_nowait())
                 except: break
             
+            last_rpm = 0; last_gear = 1; last_v_gear = 'N'; safety_stat = True
             if history_batch:
-                latest = history_batch[-1]
-                
-                reason_val = latest.get("msg") 
-                if reason_val is None: reason_val = current_safety_reason
+                last_rpm = history_batch[-1].get("rpm", 0)
+                last_gear = history_batch[-1].get("gear", 1)
+                last_v_gear = history_batch[-1].get("v_gear_char", 'N')
+                safety_stat = history_batch[-1].get("safety_mode", True)
 
-                payload = {
-                    "type": "batch", "history": history_batch,
-                    "current": {
-                        "duty": round(current_duty, 1), 
-                        "pedal": current_pedal_raw,
-                        "reason": reason_val, 
-                        "remaining_time": current_remaining_time,
-                        "rpm": latest.get("rpm", 0), 
-                        "gear": latest.get("gear", 1), 
-                        "v_gear": latest.get("v_gear_char", 'N'),
-                        "safety_mode": latest.get("safety_mode", True)
-                    }
+            payload = {
+                "type": "batch", "history": history_batch,
+                "current": {
+                    "duty": round(current_duty, 1), "pedal": current_pedal_raw,
+                    "reason": current_safety_reason, "remaining_time": current_remaining_time,
+                    "rpm": last_rpm, "gear": last_gear, "v_gear": last_v_gear,
+                    "safety_mode": safety_stat
                 }
-                await websocket.send_json(payload)
-            await asyncio.sleep(0.05)
+            }
+            await websocket.send_json(payload)
+            
+            # [수정] 0.05 -> 0.015 (초당 20회 -> 약 60회 전송으로 부드럽게)
+            await asyncio.sleep(0.015) 
     except: pass
-app.include_router(router)
