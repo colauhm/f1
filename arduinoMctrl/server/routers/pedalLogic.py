@@ -269,8 +269,8 @@ def process_safety_logic(
         angular_velocity = delta_angle / dt
         current_angular_velocity = angular_velocity
 
-        # [수정] 각속도가 294~420 사이일 경우에만 급가속으로 판정
-        if 294 <= angular_velocity <= 420:
+        # [수정] 각속도가 420 이상일 경우 급가속으로 판정
+        if angular_velocity >= 420:
             trigger_reason = "angular_velocity"
 
         is_over_90 = (current_pedal >= 90)
@@ -288,7 +288,7 @@ def process_safety_logic(
         target_speed = 0
         visual_gear = "N"
         trigger_sound = True
-        frame_reason = "⚠️ 급가속 감지! (각속도 294~420)"
+        frame_reason = "⚠️ 급가속 감지! (각속도 420 이상)"
 
     elif trigger_reason == "rapid_press":
         lock_active = True
