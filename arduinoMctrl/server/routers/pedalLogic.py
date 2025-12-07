@@ -84,7 +84,7 @@ safety_mode_enabled = True # 기본값 ON
 # [초기 상태 N]
 drive_mode = 'N' 
 
-dist_history = deque(maxlen=10) 
+dist_history = deque(maxlen=5)  # [수정] 거리 평균 계산 주기 단축 (10 -> 5) 
 data_queue = queue.Queue()
 
 # [수정] 웹소켓용 마지막 상태 저장 (깜빡임 방지)
@@ -261,15 +261,16 @@ def process_safety_logic(
         front_danger = True
 
     dt = current_time - last_time
-    trigger_event = False 
+    trigger_event = False
 
     if dt > 0:
         delta_percent = current_pedal - last_pedal
         delta_angle = (delta_percent / 100.0) * PEDAL_TOTAL_ANGLE
         angular_velocity = delta_angle / dt
         current_angular_velocity = angular_velocity
-        
-        if angular_velocity >= CRITICAL_ANGULAR_VELOCITY:
+
+        # [수정] 각속도가 294~420 사이일 경우에만 급가속으로 판정
+        if 294 <= angular_velocity <= 420:
             trigger_event = True
         
         is_over_90 = (current_pedal >= 90)
@@ -282,11 +283,11 @@ def process_safety_logic(
 
     if trigger_event:
         lock_active = True
-        pedal_error_expiry = current_time + 3.0 
-        target_speed = 0 
-        visual_gear = "N" 
+        pedal_error_expiry = current_time + 3.0
+        target_speed = 0
+        visual_gear = "N"
         trigger_sound = True
-        frame_reason = "⚠️ 2초내 3회 페달 가속 감지!!"
+        frame_reason = "⚠️ 2초내 급가속 3회이상 시도"
     
     elif front_danger:
         frame_reason = "⚠️ 전방을 주의하세요!"
