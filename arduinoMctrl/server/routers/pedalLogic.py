@@ -50,7 +50,8 @@ BTN_SAFETY_PIN = 26 # [안전 모드 토글]
 SERIAL_PORT = '/dev/ttyUSB0'; BAUD_RATE = 115200
 
 # ---- 3. 임계값 설정 ----
-PEDAL_TOTAL_ANGLE = 45.0
+# [수정] 각속도 계산용 각도를 절반으로 줄임 (45 -> 22.5)
+PEDAL_TOTAL_ANGLE = 22.5
 CRITICAL_ANGULAR_VELOCITY = 420
 RAPID_PRESS_COUNT = 3      
 RAPID_PRESS_WINDOW = 2.0   
@@ -85,6 +86,12 @@ drive_mode = 'N'
 
 dist_history = deque(maxlen=10) 
 data_queue = queue.Queue()
+
+# [수정] 웹소켓용 마지막 상태 저장 (깜빡임 방지)
+last_ws_rpm = 0
+last_ws_gear = 1
+last_ws_v_gear = 'N'
+last_ws_safety = True
 
 # ---- USB 오디오 카드 찾기 ----
 def get_usb_card_number():
@@ -303,6 +310,7 @@ def process_safety_logic(
 def hardware_loop():
     global current_duty, target_duty_raw, current_pedal_raw, current_safety_reason, current_remaining_time, stop_threads, is_warning_sound_active
     global drive_mode, safety_mode_enabled
+    global last_ws_rpm, last_ws_gear, last_ws_v_gear, last_ws_safety
     
     GPIO.setmode(GPIO.BCM); GPIO.setwarnings(False)
     GPIO.setup(PWM_A_PIN, GPIO.OUT); GPIO.setup(IN1_PIN, GPIO.OUT); GPIO.setup(IN2_PIN, GPIO.OUT)
@@ -462,6 +470,12 @@ def hardware_loop():
             pwm_a.ChangeDutyCycle(current_duty)
             pwm_b.ChangeDutyCycle(current_duty)
 
+            # [수정] 웹소켓용 마지막 상태 업데이트
+            last_ws_rpm = current_rpm
+            last_ws_gear = gear_num
+            last_ws_v_gear = visual_gear
+            last_ws_safety = safety_mode_enabled
+
             data_queue.put({
                 "t": current_time * 1000, "p": current_pedal_raw, "d": current_duty,
                 "v": v_val, "dist": round(final_dist, 1),
@@ -489,6 +503,8 @@ def start_hardware():
 
 @router.websocket("")
 async def websocket_endpoint(websocket: WebSocket):
+    global last_ws_rpm, last_ws_gear, last_ws_v_gear, last_ws_safety
+    
     await websocket.accept()
     try:
         while True:
@@ -498,20 +514,22 @@ async def websocket_endpoint(websocket: WebSocket):
                 try: history_batch.append(data_queue.get_nowait())
                 except: break
             
-            last_rpm = 0; last_gear = 1; last_v_gear = 'N'; safety_stat = True
+            # [수정] history_batch가 있으면 업데이트, 없으면 이전 값 유지
             if history_batch:
-                last_rpm = history_batch[-1].get("rpm", 0)
-                last_gear = history_batch[-1].get("gear", 1)
-                last_v_gear = history_batch[-1].get("v_gear_char", 'N')
-                safety_stat = history_batch[-1].get("safety_mode", True)
+                last_ws_rpm = history_batch[-1].get("rpm", last_ws_rpm)
+                last_ws_gear = history_batch[-1].get("gear", last_ws_gear)
+                last_ws_v_gear = history_batch[-1].get("v_gear_char", last_ws_v_gear)
+                last_ws_safety = history_batch[-1].get("safety_mode", last_ws_safety)
 
             payload = {
                 "type": "batch", "history": history_batch,
                 "current": {
                     "duty": round(current_duty, 1), "pedal": current_pedal_raw,
                     "reason": current_safety_reason, "remaining_time": current_remaining_time,
-                    "rpm": last_rpm, "gear": last_gear, "v_gear": last_v_gear,
-                    "safety_mode": safety_stat
+                    "rpm": last_ws_rpm,        # [수정] 항상 마지막 유효값 사용
+                    "gear": last_ws_gear,      # [수정] 항상 마지막 유효값 사용
+                    "v_gear": last_ws_v_gear,  # [수정] 항상 마지막 유효값 사용
+                    "safety_mode": last_ws_safety
                 }
             }
             await websocket.send_json(payload)
