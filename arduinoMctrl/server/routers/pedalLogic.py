@@ -179,6 +179,8 @@ def read_distance():
 # =========================================================
 # 안전 로직 (Logic) - 3단계 엄격한 잠금 적용
 # =========================================================
+# [pedalLogic.py] 내부 함수 수정
+
 def process_safety_logic(
     current_time, current_pedal, last_pedal, last_time,
     final_dist, is_btn_pressed,
@@ -192,98 +194,115 @@ def process_safety_logic(
     visual_gear = current_drive_mode 
     unlock_success = False
     
-    # [1] Park(P) 또는 Neutral(N)
-    if current_drive_mode == 'P' or current_drive_mode == 'N':
+    # [1] Park(P)
+    if current_drive_mode == 'P':
         return {
             "target_speed": 0, "logical_reason": None,
             "trigger_sound": False, "angular_velocity": 0,
             "lock_active": False, "pedal_error_expiry": 0,
             "prev_over_90": False, "prev_front_danger": False, 
-            "last_pedal_active_time": current_time, "visual_gear": current_drive_mode,
+            "last_pedal_active_time": current_time, "visual_gear": "P",
             "unlock_success": False
         }
     
-    # [2] 안전 제한 (Lock Active)
+    # [2] 안전 제한 (Lock Active) - 여기가 핵심 수정 사항
     if lock_active:
-        target_speed = 0
+        target_speed = 0 # 제한 시 속도 0
         visual_gear = "N" 
         trigger_sound = True 
         
-        # [단계 1] 3초 강제 대기
+        # 3초 카운트다운 로직 강화
         if current_time < pedal_error_expiry:
+            # [A] 3초가 지나기 전에는 무조건 이 메시지 유지
             remaining = int(pedal_error_expiry - current_time) + 1
-            frame_reason = f"⛔ 위험 감지! ({remaining}초 대기)"
-            lock_active = True 
-            
-        # [단계 2] 3초 경과 후 -> 해제 조건 검사
+            frame_reason = f"⚠️ 페달 오조작 감지! ({remaining}초)"
         else:
+            # [B] 3초 경과 후 -> 해제 가이드 안내
             if current_pedal > 0:
-                frame_reason = "🦶 엑셀에서 발을 완전히 떼세요!"
-                lock_active = True 
+                # 안전을 위해 페달을 먼저 떼게 유도
+                frame_reason = "⚠️ 엑셀에서 발을 먼저 떼세요!"
             else:
+                # 페달을 뗐다면 버튼 해제 안내
                 if is_btn_pressed:
-                    lock_active = False   # 해제 성공
-                    pedal_error_expiry = 0
-                    frame_reason = None
-                    target_speed = IDLE_DUTY # 크리핑 복귀
-                    trigger_sound = False
-                    unlock_success = True
+                    lock_active = False; pedal_error_expiry = 0
+                    frame_reason = None; 
+                    target_speed = IDLE_DUTY 
+                    trigger_sound = False 
+                    unlock_success = True 
                 else:
-                    frame_reason = "🔵 해제버튼(21번)을 누르세요"
-                    lock_active = True
+                    frame_reason = "🔵 해제버튼(21번)을 눌르세요"
 
         return {
             "target_speed": target_speed, "logical_reason": frame_reason,
             "trigger_sound": trigger_sound,
-            "angular_velocity": current_angular_velocity,
+            "angular_velocity": current_angular_velocity, # Lock 상태에선 0
             "lock_active": lock_active, "pedal_error_expiry": pedal_error_expiry,
             "prev_over_90": prev_over_90,
             "prev_front_danger": prev_front_danger, "last_pedal_active_time": last_pedal_active_time,
             "visual_gear": visual_gear,
             "unlock_success": unlock_success
         }
+    
+    # [3] Neutral(N)
+    if current_drive_mode == 'N':
+        return {
+            "target_speed": 0, "logical_reason": None,
+            "trigger_sound": False, "angular_velocity": 0,
+            "lock_active": False, "pedal_error_expiry": 0,
+            "prev_over_90": False, "prev_front_danger": False,
+            "last_pedal_active_time": current_time, "visual_gear": "N",
+            "unlock_success": False
+        }
 
-    # [3] Drive(D) - 위험 감지
+    # [4] Drive(D) - 감지 로직 순서 변경
     visual_gear = "D" 
     front_danger = False
     
+    # 전방 거리 감지
     if final_dist > 0 and final_dist <= COLLISION_DIST_LIMIT and current_pedal > 0:
         front_danger = True
 
-    if front_danger:
+    # [수정] 각속도 계산을 전방 감지 여부와 상관없이 항상 수행
+    dt = current_time - last_time
+    trigger_event = False # 급발진 감지 플래그
+
+    if dt > 0:
+        delta_percent = current_pedal - last_pedal
+        delta_angle = (delta_percent / 100.0) * PEDAL_TOTAL_ANGLE
+        angular_velocity = delta_angle / dt
+        current_angular_velocity = angular_velocity
+        
+        # 각속도 임계값 초과 체크
+        if angular_velocity >= CRITICAL_ANGULAR_VELOCITY:
+            trigger_event = True
+        
+        # 빠른 연속 입력 체크
+        is_over_90 = (current_pedal >= 90)
+        if is_over_90 and not prev_over_90: press_timestamps.append(current_time)
+        while press_timestamps and press_timestamps[0] < current_time - RAPID_PRESS_WINDOW:
+            press_timestamps.popleft()
+        if len(press_timestamps) >= RAPID_PRESS_COUNT:
+            trigger_event = True; press_timestamps.clear()
+        prev_over_90 = is_over_90
+
+    # [중요] 우선순위 결정: 급발진 감지가 전방 주의보다 우선함 (Lock을 걸어야 하므로)
+    if trigger_event:
+        lock_active = True
+        pedal_error_expiry = current_time + 3.0 # 3초간 메시지 유지 시간 설정
+        target_speed = 0 
+        visual_gear = "N" 
+        trigger_sound = True
+        frame_reason = "⚠️ 페달 오조작 감지!"
+    
+    elif front_danger:
+        # 급발진은 아니지만 전방이 위험한 경우
         frame_reason = "⚠️ 전방을 주의하세요!"
         target_speed = 0
         trigger_sound = True 
+    
     else:
-        dt = current_time - last_time
-        if dt > 0:
-            delta_percent = current_pedal - last_pedal
-            delta_angle = (delta_percent / 100.0) * PEDAL_TOTAL_ANGLE
-            angular_velocity = delta_angle / dt
-            current_angular_velocity = angular_velocity
-            
-            trigger_event = False
-            if angular_velocity >= CRITICAL_ANGULAR_VELOCITY:
-                trigger_event = True
-            
-            is_over_90 = (current_pedal >= 90)
-            if is_over_90 and not prev_over_90: press_timestamps.append(current_time)
-            while press_timestamps and press_timestamps[0] < current_time - RAPID_PRESS_WINDOW:
-                press_timestamps.popleft()
-            if len(press_timestamps) >= RAPID_PRESS_COUNT:
-                trigger_event = True; press_timestamps.clear()
-            prev_over_90 = is_over_90
-
-            if trigger_event:
-                lock_active = True
-                pedal_error_expiry = current_time + 3.0
-                target_speed = 0 
-                visual_gear = "N" 
-                trigger_sound = True
-                frame_reason = "⛔ 위험 감지! (잠금 시작)"
-                print(f"!!! LOCK TRIGGERED at {current_time} !!!")
-            else:
-                target_speed = max(current_pedal, IDLE_DUTY)
+        # 정상 주행
+        target_speed = max(current_pedal, IDLE_DUTY)
 
     return {
         "target_speed": target_speed, "logical_reason": frame_reason,
@@ -291,11 +310,10 @@ def process_safety_logic(
         "angular_velocity": current_angular_velocity,
         "lock_active": lock_active, "pedal_error_expiry": pedal_error_expiry,
         "prev_over_90": prev_over_90,
-        "prev_front_danger": prev_front_danger, "last_pedal_active_time": last_pedal_active_time,
+        "prev_front_danger": front_danger, "last_pedal_active_time": last_pedal_active_time,
         "visual_gear": visual_gear,
-        "unlock_success": unlock_success
+        "unlock_success": False
     }
-
 # ---- 메인 하드웨어 루프 (변속 로직 제거됨) ----
 def hardware_loop():
     global current_duty, target_duty_raw, current_pedal_raw, current_safety_reason, current_remaining_time, stop_threads, is_warning_sound_active
