@@ -261,7 +261,7 @@ def process_safety_logic(
         front_danger = True
 
     dt = current_time - last_time
-    trigger_event = False
+    trigger_reason = None  # [수정] 각 감지 원인을 구분
 
     if dt > 0:
         delta_percent = current_pedal - last_pedal
@@ -271,17 +271,26 @@ def process_safety_logic(
 
         # [수정] 각속도가 294~420 사이일 경우에만 급가속으로 판정
         if 294 <= angular_velocity <= 420:
-            trigger_event = True
-        
+            trigger_reason = "angular_velocity"
+
         is_over_90 = (current_pedal >= 90)
         if is_over_90 and not prev_over_90: press_timestamps.append(current_time)
         while press_timestamps and press_timestamps[0] < current_time - RAPID_PRESS_WINDOW:
             press_timestamps.popleft()
         if len(press_timestamps) >= RAPID_PRESS_COUNT:
-            trigger_event = True; press_timestamps.clear()
+            trigger_reason = "rapid_press"; press_timestamps.clear()
         prev_over_90 = is_over_90
 
-    if trigger_event:
+    # [수정] 감지 원인에 따라 다른 경고 문구 표시
+    if trigger_reason == "angular_velocity":
+        lock_active = True
+        pedal_error_expiry = current_time + 3.0
+        target_speed = 0
+        visual_gear = "N"
+        trigger_sound = True
+        frame_reason = "⚠️ 급가속 감지! (각속도 294~420)"
+
+    elif trigger_reason == "rapid_press":
         lock_active = True
         pedal_error_expiry = current_time + 3.0
         target_speed = 0
