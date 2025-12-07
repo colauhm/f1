@@ -330,7 +330,7 @@ def hardware_loop():
     }
 
     ser = None
-    smoothed_pedal_val = 0.0 # [추가] 엔진/모터 출력을 위한 가상 값 (관성용)
+    smoothed_pedal_val = 0.0  # 엔진/모터 출력을 위한 가상 값 (관성용)
     last_safety_btn_val = 1 
 
     try:
@@ -382,8 +382,8 @@ def hardware_loop():
                     drive_mode 
                 )
                 
-                if result["lock_active"] and drive_mode == 'D':
-                    drive_mode = 'N'
+                # [수정] lock_active 시 drive_mode 변경하지 않음 (깜빡임 방지)
+                # 대신 visual_gear만 N으로 표시
                 if result["unlock_success"]:
                     drive_mode = 'D'
                     result["visual_gear"] = 'D'
@@ -405,10 +405,13 @@ def hardware_loop():
                 r_val = 1 if (result["lock_active"] or result["prev_front_danger"]) else 0
 
             else:
-                target_raw = current_pedal_raw 
-                if drive_mode == 'P': target_raw = 0
-                elif drive_mode == 'N': target_raw = 0
-                else: target_raw = max(current_pedal_raw, IDLE_DUTY) 
+                # 안전 모드 OFF 시
+                if drive_mode == 'P':
+                    target_raw = 0
+                elif drive_mode == 'N':
+                    target_raw = 0
+                else:  # D단
+                    target_raw = max(current_pedal_raw, IDLE_DUTY)
                 
                 visual_gear = drive_mode
                 is_warning_sound_active = False
@@ -422,32 +425,39 @@ def hardware_loop():
             # =========================================================
             # [핵심 수정] 가상 엔진 스무딩 로직 (관성 구현)
             # =========================================================
-            # N단이든 D단이든 페달 입력값(current_pedal_raw 혹은 target_raw)을 부드럽게 따라감
-            # N단일 때는 모터엔 0을 주지만, RPM 계산용 값은 계속 스무딩 처리함
             
-            desired_val = current_pedal_raw # 기본적으로 페달을 따라감
-            if visual_gear == 'D':
-                 desired_val = target_raw # D단이면 안전로직이 적용된 값을 따라감
-            elif visual_gear == 'P':
-                 desired_val = 0 # P단은 완전 0
+            # [수정1] N단/P단에서는 엑셀 입력 무시, 감속만 허용
+            if visual_gear == 'P':
+                desired_val = 0  # P단은 완전 정지
+            elif visual_gear == 'N':
+                desired_val = 0  # N단도 목표는 0 (감속만)
+            else:  # D단
+                desired_val = target_raw  # 안전로직이 적용된 값
 
             # 스무딩 처리 (가감속 반응성 적용)
             if desired_val > smoothed_pedal_val:
-                smoothed_pedal_val += ACCEL_STEP
-                if smoothed_pedal_val > desired_val: smoothed_pedal_val = desired_val
+                # [수정2] N단에서는 가속 불가 (감속만 허용)
+                if visual_gear == 'D':
+                    smoothed_pedal_val += ACCEL_STEP
+                    if smoothed_pedal_val > desired_val: 
+                        smoothed_pedal_val = desired_val
+                # N단, P단에서는 가속하지 않음 (else 생략)
             elif desired_val < smoothed_pedal_val:
                 smoothed_pedal_val -= DECEL_STEP
-                if smoothed_pedal_val < desired_val: smoothed_pedal_val = desired_val
+                if smoothed_pedal_val < desired_val: 
+                    smoothed_pedal_val = desired_val
             
-            # RPM은 항상 스무딩된 값에 비례 (N단이어도 서서히 떨어짐)
+            # 음수 방지
+            if smoothed_pedal_val < 0:
+                smoothed_pedal_val = 0
+            
+            # RPM은 항상 스무딩된 값에 비례 (모든 기어에서 동기화)
             current_rpm = int(smoothed_pedal_val * (MAX_RPM_REAL / 100.0))
-            gear_num = 1 # 단일 기어
+            gear_num = 1  # 단일 기어
 
-            # 실제 모터 출력 (PWM) 결정
-            if visual_gear == 'D':
-                current_duty = smoothed_pedal_val
-            else:
-                current_duty = 0 # N, P단은 모터 차단
+            # [수정3] 실제 모터 출력도 스무딩된 값 사용 (관성 적용)
+            # 모든 기어에서 모터와 게이지가 동기화됨
+            current_duty = smoothed_pedal_val
 
             pwm_a.ChangeDutyCycle(current_duty)
             pwm_b.ChangeDutyCycle(current_duty)
