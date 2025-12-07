@@ -273,9 +273,17 @@ def process_safety_logic(
         if angular_velocity >= 420:
             trigger_reason = "angular_velocity"
 
-        # [수정] 각속도가 294 이상 420 미만일 때 2초내 3회 카운트
-        if 294 <= angular_velocity < 420:
-            press_timestamps.append(current_time)
+        # [수정] 2초내 3회 카운트 조건 세분화
+        # 첫 번째: 각속도 294~420 사이일 때만 카운트
+        # 나머지 2번: 각속도 150 이상일 때 카운트
+        if len(press_timestamps) == 0:
+            # 첫 번째 카운트: 294~420 사이
+            if 294 <= angular_velocity < 420:
+                press_timestamps.append(current_time)
+        else:
+            # 두 번째, 세 번째 카운트: 150 이상
+            if angular_velocity >= 150:
+                press_timestamps.append(current_time)
 
         # 2초 이전 기록 제거
         while press_timestamps and press_timestamps[0] < current_time - RAPID_PRESS_WINDOW:
