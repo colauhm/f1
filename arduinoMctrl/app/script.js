@@ -25,6 +25,7 @@ const COLOR_GREEN = "#39ff14";
 const COLOR_RED = "#ff0000";
 
 const TIRE_CIRCUM = 0.3; 
+const MAX_RPM = 1350; // [추가] 게이지 바늘 계산용 최대 RPM
 
 let pedalBuffer = [], motorBuffer = [], velocityBuffer = [], distanceBuffer = [];
 const MAX_STORE_MINUTES = 1.5; 
@@ -124,28 +125,29 @@ ws.onmessage = (event) => {
         const history = data.history;
 
         if (current.duty !== undefined) {
-            const duty = parseFloat(current.duty);
             
-            let angle = (duty * 1.8) - 90;
-            if (angle < -90) angle = -90; if (angle > 90) angle = 90;
-            needle.style.transform = `rotate(${angle}deg)`;
-
             const backendRpm = current.rpm || 0;
             const backendGear = current.gear || 1;
             const vGear = current.v_gear || 'N'; 
 
+            // [핵심 수정] 게이지 바늘을 RPM 기준으로 계산 (동기화 해결)
+            // RPM 0 -> -90도, MaxRPM -> +90도
+            let rpmRatio = backendRpm / MAX_RPM;
+            if (rpmRatio > 1) rpmRatio = 1;
+            let angle = (rpmRatio * 180) - 90;
+            
+            needle.style.transform = `rotate(${angle}deg)`;
+
             // [수정] 속도 3배 증가 적용
             const currentSpeed = (backendRpm * TIRE_CIRCUM * 0.06) * 3;
-
             let displaySpeed = currentSpeed;
-            
-            // [수정] P단일 때만 0으로, N단(Lock)일 때는 속도 표시
             if(vGear === 'P') displaySpeed = 0;
 
             rpmText.innerText = backendRpm; 
             speedText.innerText = Math.round(displaySpeed);
             
-            if(vGear === 'D') gearText.innerText = "D" + backendGear;
+            // [수정] D1, D2 삭제 -> 그냥 'D' 표시
+            if(vGear === 'D') gearText.innerText = "D";
             else gearText.innerText = vGear;
 
             updateGearStrip(vGear);

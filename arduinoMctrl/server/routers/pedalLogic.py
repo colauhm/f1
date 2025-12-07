@@ -61,15 +61,12 @@ COLLISION_DIST_LIMIT = 100.0
 IDLE_DUTY = 20.0      
 IDLE_TIMEOUT = 5.0
 
-# [가감속 반응성]
+# [가감속 반응성 - 관성 구현]
 ACCEL_STEP = 1.5
 DECEL_STEP = 0.5
 
-# [변속기 시뮬레이션]
-MAX_RPM_REAL = 1350
-SHIFT_POINT_1 = 35.0
-SHIFT_POINT_2 = 70.0
-SHIFT_DELAY_TIME = 0.2
+# [RPM 설정 - 선형 비례]
+MAX_RPM_REAL = 1350 
 
 # ---- 전역 변수 ----
 current_duty = 0.0          
@@ -85,11 +82,6 @@ safety_mode_enabled = True # 기본값 ON
 
 # [초기 상태 N]
 drive_mode = 'N' 
-
-# 변속기 상태
-virtual_gear = 1
-virtual_rpm = 0
-shift_pause_timer = 0.0
 
 dist_history = deque(maxlen=10) 
 data_queue = queue.Queue()
@@ -161,7 +153,7 @@ def audio_processing_thread():
         else:
             time.sleep(0.1)
 
-# ---- 거리 측정 (수정됨: 타임아웃 단축) ----
+# ---- 거리 측정 ----
 def read_distance():
     if PLATFORM == "WINDOWS": return 50 + 60 * np.sin(time.time()) + np.random.randint(-2, 2)
     try:
@@ -169,7 +161,6 @@ def read_distance():
         GPIO.output(TRIG_PIN, True); time.sleep(0.00001)
         GPIO.output(TRIG_PIN, False)
         
-        # [수정] 타임아웃 0.02초로 단축하여 루프 지연 방지
         start_time = time.time(); stop_time = time.time(); timeout = start_time + 0.02
         
         while GPIO.input(ECHO_PIN) == 0:
@@ -185,7 +176,7 @@ def read_distance():
     except: return None
 
 # =========================================================
-# 안전 로직 (Logic) - [수정됨: 우선순위 및 타이머 로직 개선]
+# 안전 로직 (Logic) 
 # =========================================================
 def process_safety_logic(
     current_time, current_pedal, last_pedal, last_time,
@@ -213,11 +204,10 @@ def process_safety_logic(
     
     # [2] 안전 제한 (Lock Active)
     if lock_active:
-        target_speed = 0 # 제한 시 속도 0
+        target_speed = 0 
         visual_gear = "N" 
         trigger_sound = True 
         
-        # [수정] 3초 카운트다운 동안 메시지 고정
         if current_time < pedal_error_expiry:
             remaining = int(pedal_error_expiry - current_time) + 1
             frame_reason = f"⚠️ 페달 오조작 감지! ({remaining}초)"
@@ -237,7 +227,7 @@ def process_safety_logic(
         return {
             "target_speed": target_speed, "logical_reason": frame_reason,
             "trigger_sound": trigger_sound,
-            "angular_velocity": current_angular_velocity, # Lock 상태에선 0
+            "angular_velocity": current_angular_velocity,
             "lock_active": lock_active, "pedal_error_expiry": pedal_error_expiry,
             "prev_over_90": prev_over_90,
             "prev_front_danger": prev_front_danger, "last_pedal_active_time": last_pedal_active_time,
@@ -260,11 +250,9 @@ def process_safety_logic(
     visual_gear = "D" 
     front_danger = False
     
-    # 전방 거리 먼저 체크
     if final_dist > 0 and final_dist <= COLLISION_DIST_LIMIT and current_pedal > 0:
         front_danger = True
 
-    # [수정] 각속도 계산을 항상 수행
     dt = current_time - last_time
     trigger_event = False 
 
@@ -285,10 +273,9 @@ def process_safety_logic(
             trigger_event = True; press_timestamps.clear()
         prev_over_90 = is_over_90
 
-    # [수정] 급발진 감지(Lock 유발)를 전방 주의보다 우선 처리
     if trigger_event:
         lock_active = True
-        pedal_error_expiry = current_time + 3.0 # 3초간 메시지 유지
+        pedal_error_expiry = current_time + 3.0 
         target_speed = 0 
         visual_gear = "N" 
         trigger_sound = True
@@ -312,34 +299,10 @@ def process_safety_logic(
         "unlock_success": False
     }
 
-def simulate_transmission(duty_val, current_time):
-    global virtual_gear, virtual_rpm, shift_pause_timer
-    
-    target_gear = 1
-    if duty_val > SHIFT_POINT_2: target_gear = 3
-    elif duty_val > SHIFT_POINT_1: target_gear = 2
-    
-    if target_gear != virtual_gear:
-        if shift_pause_timer <= current_time:
-            shift_pause_timer = current_time + SHIFT_DELAY_TIME
-        virtual_gear = target_gear
-        
-    if virtual_gear == 1:
-        ratio = duty_val / SHIFT_POINT_1
-        virtual_rpm = ratio * 1300
-    elif virtual_gear == 2:
-        ratio = (duty_val - SHIFT_POINT_1) / (SHIFT_POINT_2 - SHIFT_POINT_1)
-        virtual_rpm = 800 + (ratio * (1300 - 800))
-    elif virtual_gear == 3:
-        ratio = (duty_val - SHIFT_POINT_2) / (100 - SHIFT_POINT_2)
-        virtual_rpm = 900 + (ratio * (MAX_RPM_REAL - 900))
-        
-    return virtual_gear, int(virtual_rpm)
-
-# ---- 메인 하드웨어 루프 (수정됨: 버튼 잠금 처리) ----
+# ---- 메인 하드웨어 루프 ----
 def hardware_loop():
     global current_duty, target_duty_raw, current_pedal_raw, current_safety_reason, current_remaining_time, stop_threads, is_warning_sound_active
-    global shift_pause_timer, drive_mode, safety_mode_enabled
+    global drive_mode, safety_mode_enabled
     
     GPIO.setmode(GPIO.BCM); GPIO.setwarnings(False)
     GPIO.setup(PWM_A_PIN, GPIO.OUT); GPIO.setup(IN1_PIN, GPIO.OUT); GPIO.setup(IN2_PIN, GPIO.OUT)
@@ -367,7 +330,7 @@ def hardware_loop():
     }
 
     ser = None
-    smoothed_duty = 0.0
+    smoothed_pedal_val = 0.0 # [추가] 엔진/모터 출력을 위한 가상 값 (관성용)
     last_safety_btn_val = 1 
 
     try:
@@ -377,14 +340,12 @@ def hardware_loop():
                 except: pass
 
             if PLATFORM == "LINUX":
-                # [수정] 안전 잠금 상태가 아닐 때만 기어 변경 버튼 허용
                 if not state["lock_active"]:
                     if GPIO.input(BTN_DRIVE_PIN) == 0:
                         if drive_mode != 'D': drive_mode = 'D'
                     if GPIO.input(BTN_PARK_PIN) == 0:
                         if drive_mode != 'P': drive_mode = 'P'
                 
-                # Safety Toggle
                 curr_safety_btn = GPIO.input(BTN_SAFETY_PIN)
                 if curr_safety_btn == 0 and last_safety_btn_val == 1: 
                     safety_mode_enabled = not safety_mode_enabled
@@ -411,9 +372,8 @@ def hardware_loop():
             is_btn_pressed = False
             if PLATFORM == "LINUX": is_btn_pressed = (GPIO.input(BUTTON_PIN) == 0)
 
-            # ----------------------------------------------------
+            # --- 안전 로직 실행 ---
             if safety_mode_enabled:
-                # [ON] 안전 모드
                 result = process_safety_logic(
                     current_time, current_pedal_raw, last_pedal_value, last_time,
                     final_dist, is_btn_pressed,
@@ -431,7 +391,6 @@ def hardware_loop():
                 target_raw = float(result["target_speed"])
                 visual_gear = result["visual_gear"]
                 is_warning_sound_active = result["trigger_sound"]
-                
                 current_safety_reason = result["logical_reason"]
                 
                 state.update({
@@ -446,58 +405,59 @@ def hardware_loop():
                 r_val = 1 if (result["lock_active"] or result["prev_front_danger"]) else 0
 
             else:
-                # [OFF] 무제한 모드
                 target_raw = current_pedal_raw 
-                
-                if drive_mode == 'P':
-                    target_raw = 0
-                elif drive_mode == 'N':
-                    target_raw = 0
-                else: 
-                    # D 모드 크리핑
-                    target_raw = max(current_pedal_raw, IDLE_DUTY) 
+                if drive_mode == 'P': target_raw = 0
+                elif drive_mode == 'N': target_raw = 0
+                else: target_raw = max(current_pedal_raw, IDLE_DUTY) 
                 
                 visual_gear = drive_mode
                 is_warning_sound_active = False
                 current_safety_reason = None
-                v_val = 0
-                r_val = 0
+                v_val = 0; r_val = 0
                 dt = current_time - last_time
                 if dt > 0:
                     delta_percent = current_pedal_raw - last_pedal_value
                     v_val = (delta_percent / 100.0 * PEDAL_TOTAL_ANGLE) / dt
 
-            # ----------------------------------------------------
+            # =========================================================
+            # [핵심 수정] 가상 엔진 스무딩 로직 (관성 구현)
+            # =========================================================
+            # N단이든 D단이든 페달 입력값(current_pedal_raw 혹은 target_raw)을 부드럽게 따라감
+            # N단일 때는 모터엔 0을 주지만, RPM 계산용 값은 계속 스무딩 처리함
             
-            is_shifting = (current_time < shift_pause_timer)
-            if not is_shifting:
-                if target_raw > smoothed_duty:
-                    smoothed_duty += ACCEL_STEP
-                    if smoothed_duty > target_raw: smoothed_duty = target_raw
-                elif target_raw < smoothed_duty:
-                    smoothed_duty -= DECEL_STEP
-                    if smoothed_duty < target_raw: smoothed_duty = target_raw
-            
-            sim_duty_input = smoothed_duty
-            if visual_gear == 'N':
-                sim_duty_input = current_pedal_raw 
+            desired_val = current_pedal_raw # 기본적으로 페달을 따라감
+            if visual_gear == 'D':
+                 desired_val = target_raw # D단이면 안전로직이 적용된 값을 따라감
+            elif visual_gear == 'P':
+                 desired_val = 0 # P단은 완전 0
 
-            gear_num, rpm = simulate_transmission(sim_duty_input, current_time)
+            # 스무딩 처리 (가감속 반응성 적용)
+            if desired_val > smoothed_pedal_val:
+                smoothed_pedal_val += ACCEL_STEP
+                if smoothed_pedal_val > desired_val: smoothed_pedal_val = desired_val
+            elif desired_val < smoothed_pedal_val:
+                smoothed_pedal_val -= DECEL_STEP
+                if smoothed_pedal_val < desired_val: smoothed_pedal_val = desired_val
             
-            if visual_gear == 'P': 
-                rpm = 0
-                gear_num = 1
-            
-            current_duty = smoothed_duty
-            pwm_a.ChangeDutyCycle(smoothed_duty)
-            pwm_b.ChangeDutyCycle(smoothed_duty)
+            # RPM은 항상 스무딩된 값에 비례 (N단이어도 서서히 떨어짐)
+            current_rpm = int(smoothed_pedal_val * (MAX_RPM_REAL / 100.0))
+            gear_num = 1 # 단일 기어
+
+            # 실제 모터 출력 (PWM) 결정
+            if visual_gear == 'D':
+                current_duty = smoothed_pedal_val
+            else:
+                current_duty = 0 # N, P단은 모터 차단
+
+            pwm_a.ChangeDutyCycle(current_duty)
+            pwm_b.ChangeDutyCycle(current_duty)
 
             data_queue.put({
                 "t": current_time * 1000, "p": current_pedal_raw, "d": current_duty,
                 "v": v_val, "dist": round(final_dist, 1),
                 "r": r_val, 
                 "pc": len(press_timestamps),
-                "rpm": rpm, 
+                "rpm": current_rpm,  # 스무딩된 RPM 전송
                 "gear": gear_num,
                 "v_gear_char": visual_gear,
                 "safety_mode": safety_mode_enabled
@@ -517,7 +477,6 @@ def start_hardware():
     t_hw = threading.Thread(target=hardware_loop, daemon=True)
     t_hw.start()
 
-# [수정] 웹소켓 전송 주기 0.015초로 단축
 @router.websocket("")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
