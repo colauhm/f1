@@ -286,7 +286,7 @@ def process_safety_logic(
         target_speed = 0 
         visual_gear = "N" 
         trigger_sound = True
-        frame_reason = "⚠️ 페달 오조작 감지!"
+        frame_reason = "⚠️ 2초내 3회 페달 가속 감지!!"
     
     elif front_danger:
         frame_reason = "⚠️ 전방을 주의하세요!"
