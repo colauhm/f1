@@ -134,11 +134,12 @@ ws.onmessage = (event) => {
             const backendGear = current.gear || 1;
             const vGear = current.v_gear || 'N'; 
 
-            const currentSpeed = backendRpm * TIRE_CIRCUM * 0.06;
+            // [수정] 속도 3배 증가 적용
+            const currentSpeed = (backendRpm * TIRE_CIRCUM * 0.06) * 3;
 
             let displaySpeed = currentSpeed;
             
-            // [수정 완료] P단일 때만 0으로 고정하고, N(Lock 상태)일 때는 속도를 표시함
+            // [수정] P단일 때만 0으로, N단(Lock)일 때는 속도 표시
             if(vGear === 'P') displaySpeed = 0;
 
             rpmText.innerText = backendRpm; 
