@@ -24,6 +24,8 @@ const THRESHOLD_COUNT = 3;
 const COLOR_GREEN = "#39ff14";
 const COLOR_RED = "#ff0000";
 
+const TIRE_CIRCUM = 0.3; 
+
 let pedalBuffer = [], motorBuffer = [], velocityBuffer = [], distanceBuffer = [];
 const MAX_STORE_MINUTES = 1.5; 
 const MAX_DATA_POINTS = 2500;
@@ -123,41 +125,37 @@ ws.onmessage = (event) => {
 
         if (current.duty !== undefined) {
             const duty = parseFloat(current.duty);
-            const backendRpm = current.rpm || 0;
-            const backendGear = current.gear || 1;
-            const vGear = current.v_gear || 'N'; 
-
-            // 1. 게이지 바늘 각도 (-90 ~ 90도)
+            
             let angle = (duty * 1.8) - 90;
             if (angle < -90) angle = -90; if (angle > 90) angle = 90;
             needle.style.transform = `rotate(${angle}deg)`;
 
-            // [핵심] 가상 속도 계산 (Duty 20% -> 15, Duty 100% -> 100)
-            // 공식: y = 1.0625x - 6.25 
-            let displaySpeed = (duty * 1.0625) - 6.25;
+            const backendRpm = current.rpm || 0;
+            const backendGear = current.gear || 1;
+            const vGear = current.v_gear || 'N'; 
+
+            const currentSpeed = backendRpm * TIRE_CIRCUM * 0.06;
+
+            let displaySpeed = currentSpeed;
             
-            // 음수 방지
-            if (displaySpeed < 0) displaySpeed = 0;
-
-            // 기어가 N이나 P면 속도 0 고정
-            if(vGear === 'N' || vGear === 'P') displaySpeed = 0;
-
-            // [디버깅 로그] F12 눌러서 Console 탭에서 확인 가능
-            console.log(`[SpeedCheck] Duty: ${duty}%, RPM: ${backendRpm}, Gear: ${vGear}, CalcSpeed: ${displaySpeed.toFixed(1)} km/h`);
+            // [수정 완료] P단일 때만 0으로 고정하고, N(Lock 상태)일 때는 속도를 표시함
+            if(vGear === 'P') displaySpeed = 0;
 
             rpmText.innerText = backendRpm; 
-            speedText.innerText = Math.round(displaySpeed); 
+            speedText.innerText = Math.round(displaySpeed);
             
             if(vGear === 'D') gearText.innerText = "D" + backendGear;
             else gearText.innerText = vGear;
 
             updateGearStrip(vGear);
 
-            // 안전 모드 박스 업데이트
+            // [핵심] 안전 모드 박스 업데이트
             if (current.safety_mode) {
+                // ON 켜짐 (active + on-active)
                 safetyLabelOn.classList.add("active", "on-active");
                 safetyLabelOff.classList.remove("active", "off-active");
             } else {
+                // OFF 켜짐 (active + off-active)
                 safetyLabelOn.classList.remove("active", "on-active");
                 safetyLabelOff.classList.add("active", "off-active");
             }
@@ -190,7 +188,6 @@ ws.onmessage = (event) => {
 
             history.forEach(pt => {
                 const isRestricted = (pt.r === 1);
-                // 타임스탬프 ms 단위 그대로 사용
                 const point = { x: pt.t, y: pt.p, restricted: isRestricted };
                 const pointM = { x: pt.t, y: pt.d, restricted: isRestricted };
                 const pointV = { x: pt.t, y: pt.v, restricted: isRestricted };
